@@ -80,7 +80,9 @@ fn get_planes(gj: &GeoJson) -> PlaneList {
 
 fn get_properties(gj: &GeoJson) -> PropList {
     match gj {
-        GeoJson::FeatureCollection(fc) => fc.features.iter().map(|f| f.properties).collect(),
+        GeoJson::FeatureCollection(fc) => {
+            fc.features.iter().map(|f| f.clone().properties).collect()
+        }
         _ => vec![],
     }
 }
@@ -96,12 +98,12 @@ struct BBox {
 
 impl BBox {
     fn from_planes(pl: &PlaneList) -> BBox {
-        let mut minx = OrderedFloat(std::f64::INFINITY);
-        let mut miny = OrderedFloat(std::f64::INFINITY);
-        let mut minz = OrderedFloat(std::f64::INFINITY);
-        let mut maxx = OrderedFloat(std::f64::NEG_INFINITY);
-        let mut maxy = OrderedFloat(std::f64::NEG_INFINITY);
-        let mut maxz = OrderedFloat(std::f64::NEG_INFINITY);
+        let mut minx = OrderedFloat(std::f64::MAX);
+        let mut miny = OrderedFloat(std::f64::MAX);
+        let mut minz = OrderedFloat(std::f64::MAX);
+        let mut maxx = OrderedFloat(std::f64::MIN);
+        let mut maxy = OrderedFloat(std::f64::MIN);
+        let mut maxz = OrderedFloat(std::f64::MIN);
 
         pl.iter().for_each(|plane| {
             plane.iter().for_each(|pt| {
@@ -129,6 +131,14 @@ impl BBox {
             self.miny + ((self.maxy - self.miny) / 2.0),
             self.minz + ((self.maxz - self.minz) / 2.0),
         )
+    }
+
+    fn width(&self) -> f64 {
+        self.maxx - self.minx
+    }
+
+    fn height(&self) -> f64 {
+        self.maxz
     }
 
     fn top_left_near(&self) -> Point {
@@ -175,106 +185,161 @@ fn move_target(mt: na::Matrix4<f64>, cam: &Camera) -> Camera {
     }
 }
 
-fn rotate_eye(vec: na::Vector3<f64>, angle: f64, cam: &Camera) -> Camera {
-    let axis = na::Unit::new_normalize(vec);
+fn rotate_eye(axis: &na::Unit<na::Vector3<f64>>, angle: f64, cam: &Camera) -> Camera {
     let tr = na::Translation3::new(cam.target.x, cam.target.y, cam.target.z).to_homogeneous();
     let itr = na::Translation3::new(-cam.target.x, -cam.target.y, -cam.target.z).to_homogeneous();
-    let mat = na::Matrix4::from_axis_angle(&axis, angle);
+    let mat = na::Matrix4::from_axis_angle(axis, angle);
     move_eye(tr * mat * itr, cam)
 }
 
-fn rotate_target(vec: na::Vector3<f64>, angle: f64, cam: &Camera) -> Camera {
-    let axis = na::Unit::new_normalize(vec);
-    let tr = na::Translation3::new(cam.eye.x, cam.eye.y, cam.eye.z).to_homogeneous();
-    let itr = na::Translation3::new(-cam.eye.x, -cam.eye.y, -cam.eye.z).to_homogeneous();
-    let mat = na::Matrix4::from_axis_angle(&axis, angle);
-    move_target(tr * mat * itr, cam)
-}
+// fn rotate_target(vec: na::Vector3<f64>, angle: f64, cam: &Camera) -> Camera {
+//     let axis = na::Unit::new_normalize(vec);
+//     let tr = na::Translation3::new(cam.eye.x, cam.eye.y, cam.eye.z).to_homogeneous();
+//     let itr = na::Translation3::new(-cam.eye.x, -cam.eye.y, -cam.eye.z).to_homogeneous();
+//     let mat = na::Matrix4::from_axis_angle(&axis, angle);
+//     move_target(tr * mat * itr, cam)
+// }
 
-fn match_mod<F0, F1, F2>(kmod: sdl2::keyboard::Mod, naked: F0, controled: F1, shifted: F2) -> Camera
+fn match_mod<F0, F1>(kmod: sdl2::keyboard::Mod, naked: F0, controled: F1) -> Option<Camera>
 where
     F0: FnOnce() -> Camera,
     F1: FnOnce() -> Camera,
-    F2: FnOnce() -> Camera,
+    // F2: FnOnce() -> Camera,
 {
     let ctrl_mod: sdl2::keyboard::Mod = sdl2::keyboard::LCTRLMOD; //& sdl2::keyboard::RCTRLMOD;
-    let shift_mod: sdl2::keyboard::Mod = sdl2::keyboard::LSHIFTMOD; //& sdl2::keyboard::RSHIFTMOD;
+                                                                  // let shift_mod: sdl2::keyboard::Mod = sdl2::keyboard::LSHIFTMOD; //& sdl2::keyboard::RSHIFTMOD;
     if kmod.intersects(ctrl_mod) {
         println!("CTRL");
-        controled()
-    } else if kmod.intersects(shift_mod) {
-        println!("SHIFT");
-        shifted()
+        Some(controled())
+    // } else if kmod.intersects(shift_mod) {
+    //     println!("SHIFT");
+    //     shifted()
     } else {
         println!("NAKED");
-        naked()
+        Some(naked())
     }
 }
 
-static CAMP_STEP: f64 = 1.0;
+static CAMP_STEP: f64 = 1.2;
 static CAM_STEP_ROT: f64 = 0.0174533;
 
-fn get_horizontal_axis(pt: Point) -> na::Vector3<f64> {
-    let e = na::Vector3::new(pt.x, pt.y, pt.z);
-    let c = na::Vector3::new(pt.x, pt.y, 0.0).cross(&e);
-    c
+fn cross(a: &Point, b: &Point) -> na::Vector3<f64> {
+    let cx = a.y * b.z - a.z * b.y;
+    let cy = a.z * b.x - a.x * b.z;
+    let cz = a.x * b.y - a.y * b.x;
+
+    na::Vector3::new(cx, cy, cz)
 }
 
-fn handle_kevent(
+fn cross_norm(a: &Point, b: &Point) -> na::Unit<na::Vector3<f64>> {
+    na::Unit::new_normalize(cross(a, b))
+}
+fn get_horizontal_axis(c: &Camera) -> na::Unit<na::Vector3<f64>> {
+    let pt0 = Point::new(c.eye.x - c.target.x, c.eye.y - c.target.y, c.eye.z);
+    let pt1 = Point::new(c.eye.x - c.target.x, c.eye.y - c.target.y, c.target.z);
+
+    cross_norm(&pt0, &pt1)
+}
+
+fn deg_to_rad(a: f64) -> f64 {
+    a * std::f64::consts::PI / 180.0
+}
+
+fn vertical_axis() -> na::Unit<na::Vector3<f64>> {
+    na::Unit::new_normalize(na::Vector3::new(0.0, 0.0, 1.0))
+}
+
+fn side_mov(c: &Camera, step: f64) -> na::Matrix4<f64> {
+    let axis = get_horizontal_axis(c);
+    let m = axis.unwrap() * step;
+    let tr = na::Translation3::from(m);
+
+    tr.to_homogeneous()
+}
+
+fn axis_mov(cam: &Camera, step: f64) -> na::Matrix4<f64> {
+    let axis = na::Unit::new_normalize(cam.target - cam.eye);
+    let m = axis.unwrap() * step;
+    let tr = na::Translation3::from(m);
+    // println!(
+    //     "axis_mov \n{}\n{}\n{}",
+    //     cam.eye,
+    //     tr.to_homogeneous(),
+    //     tr.to_homogeneous().transform_point(&cam.eye)
+    // );
+    tr.to_homogeneous()
+}
+
+fn app<A, T, F: FnOnce(A) -> T>(f: F, a: A) -> T {
+    f(a)
+}
+
+fn handle_key_event(
     key: Option<sdl2::keyboard::Keycode>,
     kmod: sdl2::keyboard::Mod,
     cam: &Camera,
+    initial_camera: &Camera,
 ) -> Option<Camera> {
-    key.map(|code| match code {
-        // naked  => camera
-        // contol => eye
-        // shift  => target
-        sdl2::keyboard::Keycode::Left => match_mod(
-            kmod,
-            || {
-                move_cam(
-                    na::Translation3::new(-CAMP_STEP, 0.0, 0.0).to_homogeneous(),
-                    cam,
-                )
-            },
-            || rotate_eye(na::Vector3::new(0.0, 0.0, 1.0), -CAM_STEP_ROT, cam),
-            || rotate_target(na::Vector3::new(0.0, 0.0, 1.0), -CAM_STEP_ROT, cam),
-        ),
-        sdl2::keyboard::Keycode::Right => match_mod(
-            kmod,
-            || {
-                move_cam(
-                    na::Translation3::new(CAMP_STEP, 0.0, 0.0).to_homogeneous(),
-                    cam,
-                )
-            },
-            || rotate_eye(na::Vector3::new(0.0, 0.0, 1.0), CAM_STEP_ROT, cam),
-            || rotate_target(na::Vector3::new(0.0, 0.0, 1.0), CAM_STEP_ROT, cam),
-        ),
-        sdl2::keyboard::Keycode::Up => match_mod(
-            kmod,
-            || {
-                move_cam(
-                    na::Translation3::new(0.0, CAMP_STEP, 0.0).to_homogeneous(),
-                    cam,
-                )
-            },
-            || rotate_eye(get_horizontal_axis(cam.eye), CAM_STEP_ROT, cam),
-            || rotate_target(get_horizontal_axis(cam.eye), CAM_STEP_ROT, cam),
-        ),
-        sdl2::keyboard::Keycode::Down => match_mod(
-            kmod,
-            || {
-                move_cam(
-                    na::Translation3::new(0.0, -CAMP_STEP, 0.0).to_homogeneous(),
-                    cam,
-                )
-            },
-            || rotate_eye(get_horizontal_axis(cam.eye), -CAM_STEP_ROT, cam),
-            || rotate_target(get_horizontal_axis(cam.eye), -CAM_STEP_ROT, cam),
-        ),
-        _ => cam.clone(),
+    key.and_then(|code| {
+        match code {
+            // naked  => camera
+            // contol => eye
+            // shift  => target
+            sdl2::keyboard::Keycode::R => Some(*initial_camera),
+            sdl2::keyboard::Keycode::Left => match_mod(
+                kmod,
+                || move_cam(side_mov(&cam, -CAMP_STEP), cam),
+                || rotate_eye(&vertical_axis(), -CAM_STEP_ROT, cam),
+            ),
+            sdl2::keyboard::Keycode::Right => match_mod(
+                kmod,
+                || move_cam(side_mov(&cam, CAMP_STEP), cam),
+                || rotate_eye(&vertical_axis(), CAM_STEP_ROT, cam),
+            ),
+            sdl2::keyboard::Keycode::Up => match_mod(
+                kmod,
+                || move_eye(axis_mov(&cam, -CAMP_STEP), cam),
+                || rotate_eye(&get_horizontal_axis(&cam), CAM_STEP_ROT, cam),
+            ),
+            sdl2::keyboard::Keycode::Down => match_mod(
+                kmod,
+                || move_eye(axis_mov(&cam, CAMP_STEP), cam),
+                || rotate_eye(&get_horizontal_axis(&cam), -CAM_STEP_ROT, cam),
+            ),
+            _ => None,
+        }
     })
+}
+
+fn handle_motion_event(xrel: i32, yrel: i32, cam: &Camera) -> Option<Camera> {
+    let ox = f64::from(xrel) / -6.0;
+    let oy = f64::from(yrel) / -6.0;
+
+    let horizontal_axis = get_horizontal_axis(cam);
+    let vertical_axis = na::Unit::new_normalize(na::Vector3::new(0.0, 0.0, 1.0));
+    let tr = na::Translation3::new(cam.eye.x, cam.eye.y, cam.eye.z).to_homogeneous();
+    let itr = na::Translation3::new(-cam.eye.x, -cam.eye.y, -cam.eye.z).to_homogeneous();
+    let hmat = na::Matrix4::from_axis_angle(&horizontal_axis, deg_to_rad(oy));
+    let vmat = na::Matrix4::from_axis_angle(&vertical_axis, deg_to_rad(ox));
+    let op = match (xrel, yrel) {
+        (0, 0) => na::Matrix4::identity(),
+        (0, _) => tr * vmat * itr,
+        (_, 0) => tr * hmat * itr,
+        (_, _) => tr * vmat * hmat * itr,
+    };
+    // println!("{:?} {:?}", horizontal_axis, vertical_axis);
+
+    // println!("handle_motion_event {} {}", ox, oy);
+    // println!("before {}", cam.target);
+    // println!("after {}", op.transform_point(&cam.target));
+
+    Some(move_target(op, cam))
+}
+
+fn handle_wheel_event(y: i32, cam: &Camera) -> Option<Camera> {
+    let oy = f64::from(y);
+    println!("handle_wheel_event {} {}", oy, CAMP_STEP * oy);
+    Some(move_target(axis_mov(&cam, CAMP_STEP * oy), cam))
 }
 
 fn sort_planes(p: Point, pl: &PlaneList) -> Vec<usize> {
@@ -311,7 +376,12 @@ fn sort_planes(p: Point, pl: &PlaneList) -> Vec<usize> {
 
 // type M3 = na::Matrix3<f64>;
 
-fn draw_planes(pl: &PlaneList, cam: &Camera, sdl_texture: &mut sdl2::render::Texture) {
+fn draw_planes(
+    pl: &PlaneList,
+    cam: &Camera,
+    sdl_texture: &mut sdl2::render::Texture,
+    style_list: &StyleList,
+) {
     let sdl_query = sdl_texture.query();
     let rect = sdl2::rect::Rect::new(0, 0, sdl_query.width, sdl_query.height);
     sdl_texture
@@ -330,7 +400,7 @@ fn draw_planes(pl: &PlaneList, cam: &Camera, sdl_texture: &mut sdl2::render::Tex
             context.paint();
 
             // 149144.0	171151.0
-            let scale = na::distance(&cam.eye, &cam.target);
+            let scale = na::distance(&cam.eye, &cam.target).abs();
             let iscale = f64::from(sdl_query.width) / scale;
             let target_ref = Point::new(cam.target.x, cam.target.y, cam.target.z + 10.0);
 
@@ -338,6 +408,10 @@ fn draw_planes(pl: &PlaneList, cam: &Camera, sdl_texture: &mut sdl2::render::Tex
 
             let view = Isometry3::look_at_lh(&cam.eye, &cam.target, &Vector3::z()).to_homogeneous();
 
+            println!(
+                "Orthographic3::new({}, {}, {}, {}, {}, {})",
+                -iscale, iscale, -iscale, iscale, 0.0, scale
+            );
             let proj_o =
                 na::geometry::Orthographic3::new(-iscale, iscale, -iscale, iscale, 0.0, scale)
                     .unwrap();
@@ -361,6 +435,8 @@ fn draw_planes(pl: &PlaneList, cam: &Camera, sdl_texture: &mut sdl2::render::Tex
                 // println!("drawing {}", index);
                 let mut started = false;
                 let plane = &pl[index.to_owned()];
+                context.new_path();
+
                 plane.iter().for_each(|pt| {
                     let aligned_point3d = vp.transform_point(pt);
                     let aligned_point = na::Point2::new(aligned_point3d.x, aligned_point3d.y);
@@ -377,18 +453,25 @@ fn draw_planes(pl: &PlaneList, cam: &Camera, sdl_texture: &mut sdl2::render::Tex
                     }
                 });
                 context.close_path();
-                context.set_source_rgb(0.9, 0.9, 0.9);
-                context.fill_preserve();
+                style_list.get_for(index).map(|s| {
+                    s.fillColor.map(|color| {
+                        context.set_source_rgba(color.red, color.green, color.blue, color.alpha);
+                        context.fill_preserve();
+                    });
 
-                context.set_line_width(0.8);
-                context.set_source_rgb(0.0, 0.0, 0.0);
-                context.stroke();
+                    s.strokeColor.map(|color| {
+                        context.set_line_width(s.strokeWidth);
+                        context.set_source_rgba(color.red, color.green, color.blue, color.alpha);
+                        context.stroke();
+                    });
+                });
             });
         }).unwrap();
 }
 
 fn main() {
     let sdl = sdl2::init().unwrap();
+    // sdl.mouse().set_relative_mouse_mode(true);
     let video_subsystem = sdl.video().unwrap();
     let window = video_subsystem
         .window("Cardoard", 800, 800)
@@ -405,16 +488,20 @@ fn main() {
     let pl = get_planes(&gj);
     let props = get_properties(&gj);
     let sj = load_style(style_fn).unwrap();
+    println!("{:?}", sj);
     let mut style = StyleList::from_config(&sj);
     style.apply(&props);
 
     println!("N {}", pl.len());
 
     let bbox = BBox::from_planes(&pl);
-    let mut camera = Camera {
-        eye: bbox.top_left_near(),
-        target: bbox.center(),
+    let center = bbox.center();
+    let initial_camera = Camera {
+        eye: center,
+        target: bbox.top_left_near(),
     };
+    let mut camera = initial_camera;
+
     let mut canvas = sdl2::render::CanvasBuilder::new(window).build().unwrap();
     canvas.set_draw_color(sdl2::pixels::Color::RGB(100, 100, 100));
     canvas.clear();
@@ -436,16 +523,31 @@ fn main() {
                 sdl2::event::Event::KeyDown {
                     keycode, keymod, ..
                 } => {
-                    match handle_kevent(keycode, keymod, &camera) {
+                    match handle_key_event(keycode, keymod, &camera, &initial_camera) {
                         Some(c) => {
                             camera = c;
-
                             dirty = true;
                         }
                         None => (),
                     };
                     println!("> {:?}", camera);
                 }
+                sdl2::event::Event::MouseMotion { xrel, yrel, .. } => {
+                    match handle_motion_event(xrel, yrel, &camera) {
+                        Some(c) => {
+                            camera = c;
+                            dirty = true;
+                        }
+                        None => (),
+                    }
+                }
+                sdl2::event::Event::MouseWheel { y, .. } => match handle_wheel_event(y, &camera) {
+                    Some(c) => {
+                        camera = c;
+                        dirty = true;
+                    }
+                    None => (),
+                },
                 _ => {}
             }
         }
@@ -453,7 +555,7 @@ fn main() {
         // render window contents here
         if dirty {
             canvas.clear();
-            draw_planes(&pl, &camera, &mut sdl_texture);
+            draw_planes(&pl, &camera, &mut sdl_texture, &style);
             match canvas.copy(&sdl_texture, None, None) {
                 Ok(_) => {
                     canvas.present();
@@ -469,5 +571,20 @@ fn main() {
         //     texture_canvas.fill_rect(Rect::new(50, 50, 50, 50)).unwrap();
         // });
         std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use cross;
+    use nalgebra as na;
+    use Point;
+    #[test]
+    fn cross_product() {
+        let a = Point::new(1.0, 2.0, 3.0);
+        let b = Point::new(1.0, 5.0, 7.0);
+        let c = cross(&a, &b);
+        // println!("{:?}", c);
+        assert_eq!(c, na::Vector3::new(-1.0, -4.0, 3.0))
     }
 }

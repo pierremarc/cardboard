@@ -164,12 +164,12 @@ impl StyleList {
         self
     }
 
-    pub fn get_for(&self, index: usize) -> Option<&Style> {
+    pub fn get_for(&self, index: &usize) -> Option<&Style> {
         let styles = &self.0;
         match self.1 {
             Some(ref apply_list) => {
                 apply_list
-                    .get(index)
+                    .get(index.to_owned())
                     .and_then(|style_index| styles.get(style_index.to_owned()))
 
                 // if index < apply_list.len() {
@@ -188,6 +188,7 @@ impl StyleList {
         let mut sl = StyleList::new();
         match style_config {
             PolygonStyleConfig::Simple(config) => {
+                println!("Insert Simple Style {:?}", config);
                 sl.add(
                     Style::new(StyleConfig::Simple)
                         .width(config.strokeWidth)
@@ -197,6 +198,7 @@ impl StyleList {
             }
             PolygonStyleConfig::Continuous(config) => {
                 config.intervals.iter().for_each(|it| {
+                    println!("Insert Continuous Style {:?}", it);
                     sl.add(
                         Style::new(StyleConfig::Continuous(StyleConfigContinuous {
                             prop_name: config.propName.clone(),
@@ -210,6 +212,7 @@ impl StyleList {
             }
             PolygonStyleConfig::Discrete(config) => {
                 config.groups.iter().for_each(|it| {
+                    println!("Insert Discrete Style {:?}", it);
                     sl.add(
                         Style::new(StyleConfig::Discrete(StyleConfigDiscrete {
                             prop_name: config.propName.clone(),
@@ -227,33 +230,37 @@ impl StyleList {
     }
 
     pub fn apply(&mut self, props: &Vec<Properties>) -> &StyleList {
-        let mut apply_list: Vec<usize> = props
+        let apply_list: Vec<usize> = props
             .iter()
             .map(|properties| {
-                self.0
-                    .iter()
-                    .position(|s| match s.config.clone() {
-                        StyleConfig::Simple => true,
+                match self.0.iter().position(|s| match s.config.clone() {
+                    StyleConfig::Simple => true,
 
-                        StyleConfig::Continuous(config) => {
-                            properties.clone().map_or(false, |props| {
-                                props.get(&config.prop_name).map_or(false, |v| {
-                                    v.as_f64()
-                                        .map_or(false, |n| n >= config.low && n < config.high)
-                                })
+                    StyleConfig::Continuous(config) => properties.clone().map_or(false, |props| {
+                        props.get(&config.prop_name).map_or(false, |v| {
+                            v.as_f64().map_or(false, |n| {
+                                println!(
+                                    "StyleConfig::Continuous {} {} {} => {}",
+                                    n,
+                                    config.low,
+                                    config.high,
+                                    n >= config.low && n < config.high,
+                                );
+                                n >= config.low && n < config.high
                             })
-                        }
+                        })
+                    }),
 
-                        StyleConfig::Discrete(config) => {
-                            properties.clone().map_or(false, |props| {
-                                props.get(&config.prop_name).map_or(false, |v| {
-                                    v.as_str()
-                                        .map_or(false, |s| config.toks.iter().any(|t| t == s))
-                                })
-                            })
-                        }
-                    }).get_or_insert(0)
-                    .to_owned()
+                    StyleConfig::Discrete(config) => properties.clone().map_or(false, |props| {
+                        props.get(&config.prop_name).map_or(false, |v| {
+                            v.as_str()
+                                .map_or(false, |s| config.toks.iter().any(|t| t == s))
+                        })
+                    }),
+                }) {
+                    Some(i) => i.to_owned(),
+                    None => panic!("Could not find a style"),
+                }
             }).collect();
 
         self.1 = Some(apply_list);
@@ -301,14 +308,38 @@ pub struct PolygonStyleConfigDiscrete {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
 pub enum PolygonStyleConfig {
+    #[serde(rename = "simple")]
     Simple(PolygonStyleConfigSimple),
+    #[serde(rename = "continuous")]
     Continuous(PolygonStyleConfigContinuous),
+    #[serde(rename = "discrete")]
     Discrete(PolygonStyleConfigDiscrete),
 }
 
 pub fn load_style(filename: &str) -> Result<PolygonStyleConfig, serde_json::Error> {
     let serialized = fs::read_to_string(filename).expect("Something went wrong reading the file");
+    // println!("{}", serialized);
 
     serde_json::from_str::<PolygonStyleConfig>(&serialized)
+}
+
+#[cfg(test)]
+mod tests {
+    use style;
+    #[test]
+    fn parse_simple() {
+        let s = r#"{"kind":"simple","strokeColor":"red","fillColor":"blue","strokeWidth":2.0}"#;
+        let p = style::PolygonStyleConfig::Simple(style::PolygonStyleConfigSimple {
+            kind: "simple".to_owned(),
+            strokeColor: "red".to_owned(),
+            fillColor: "blue".to_owned(),
+            strokeWidth: 2.0,
+        });
+        serde_json::to_string(&p).map(|ser| {
+            println!("{}", ser);
+            assert_eq!(s, ser);
+        });
+    }
 }
