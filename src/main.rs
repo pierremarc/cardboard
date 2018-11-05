@@ -5,9 +5,16 @@ extern crate libc;
 extern crate nalgebra;
 extern crate ordered_float;
 extern crate sdl2;
+extern crate serde;
+extern crate serde_json;
+extern crate svgtypes;
 extern crate time;
 
+#[macro_use]
+extern crate serde_derive;
+
 mod data;
+mod style;
 mod surface_data;
 
 use cairo::{Context, Format, ImageSurface};
@@ -19,15 +26,19 @@ use nalgebra::geometry::Isometry3;
 use nalgebra::geometry::{Point2, Point3};
 use nalgebra::Vector3;
 use ordered_float::OrderedFloat;
+use serde_json::{Map, Value as JsonValue};
 use std::cmp;
 use std::env;
 use std::fs::File;
+use style::{load_style, Properties, StyleList};
 use surface_data::create_for_data_unsafe;
 use time::PreciseTime;
 
 pub type Point = Point3<f64>;
 pub type Plane = Vec<Point>;
 pub type PlaneList = Vec<Plane>;
+
+pub type PropList = Vec<Properties>;
 
 fn plane_from_polygon(poly: PolygonType) -> Plane {
     let exterior_ring = &poly[0];
@@ -54,7 +65,7 @@ fn plane_from_feature(f: Feature, pl: &mut PlaneList) {
     }
 }
 
-fn extract_features(gj: GeoJson) -> PlaneList {
+fn get_planes(gj: &GeoJson) -> PlaneList {
     match gj {
         GeoJson::FeatureCollection(fc) => {
             let mut pl = PlaneList::new();
@@ -63,6 +74,13 @@ fn extract_features(gj: GeoJson) -> PlaneList {
                 .for_each(|f| plane_from_feature(f.clone(), &mut pl));
             pl
         }
+        _ => vec![],
+    }
+}
+
+fn get_properties(gj: &GeoJson) -> PropList {
+    match gj {
+        GeoJson::FeatureCollection(fc) => fc.features.iter().map(|f| f.properties).collect(),
         _ => vec![],
     }
 }
@@ -142,12 +160,14 @@ fn move_cam(mt: na::Matrix4<f64>, cam: &Camera) -> Camera {
         target: mt.transform_point(&cam.target),
     }
 }
+
 fn move_eye(mt: na::Matrix4<f64>, cam: &Camera) -> Camera {
     Camera {
         eye: mt.transform_point(&cam.eye),
         target: cam.target.clone(),
     }
 }
+
 fn move_target(mt: na::Matrix4<f64>, cam: &Camera) -> Camera {
     Camera {
         eye: cam.eye.clone(),
@@ -155,20 +175,7 @@ fn move_target(mt: na::Matrix4<f64>, cam: &Camera) -> Camera {
     }
 }
 
-fn match_mod<F0, F1>(kmod: sdl2::keyboard::Mod, left: F0, right: F1) -> Camera
-where
-    F0: FnOnce() -> Camera,
-    F1: FnOnce() -> Camera,
-{
-    let ctrl_mod: sdl2::keyboard::Mod = sdl2::keyboard::LCTRLMOD; //& sdl2::keyboard::RCTRLMOD;
-    if kmod.intersects(ctrl_mod) {
-        left()
-    } else {
-        right()
-    }
-}
-
-fn rotate_cam(vec: na::Vector3<f64>, angle: f64, cam: &Camera) -> Camera {
+fn rotate_eye(vec: na::Vector3<f64>, angle: f64, cam: &Camera) -> Camera {
     let axis = na::Unit::new_normalize(vec);
     let tr = na::Translation3::new(cam.target.x, cam.target.y, cam.target.z).to_homogeneous();
     let itr = na::Translation3::new(-cam.target.x, -cam.target.y, -cam.target.z).to_homogeneous();
@@ -176,8 +183,42 @@ fn rotate_cam(vec: na::Vector3<f64>, angle: f64, cam: &Camera) -> Camera {
     move_eye(tr * mat * itr, cam)
 }
 
+fn rotate_target(vec: na::Vector3<f64>, angle: f64, cam: &Camera) -> Camera {
+    let axis = na::Unit::new_normalize(vec);
+    let tr = na::Translation3::new(cam.eye.x, cam.eye.y, cam.eye.z).to_homogeneous();
+    let itr = na::Translation3::new(-cam.eye.x, -cam.eye.y, -cam.eye.z).to_homogeneous();
+    let mat = na::Matrix4::from_axis_angle(&axis, angle);
+    move_target(tr * mat * itr, cam)
+}
+
+fn match_mod<F0, F1, F2>(kmod: sdl2::keyboard::Mod, naked: F0, controled: F1, shifted: F2) -> Camera
+where
+    F0: FnOnce() -> Camera,
+    F1: FnOnce() -> Camera,
+    F2: FnOnce() -> Camera,
+{
+    let ctrl_mod: sdl2::keyboard::Mod = sdl2::keyboard::LCTRLMOD; //& sdl2::keyboard::RCTRLMOD;
+    let shift_mod: sdl2::keyboard::Mod = sdl2::keyboard::LSHIFTMOD; //& sdl2::keyboard::RSHIFTMOD;
+    if kmod.intersects(ctrl_mod) {
+        println!("CTRL");
+        controled()
+    } else if kmod.intersects(shift_mod) {
+        println!("SHIFT");
+        shifted()
+    } else {
+        println!("NAKED");
+        naked()
+    }
+}
+
 static CAMP_STEP: f64 = 1.0;
 static CAM_STEP_ROT: f64 = 0.0174533;
+
+fn get_horizontal_axis(pt: Point) -> na::Vector3<f64> {
+    let e = na::Vector3::new(pt.x, pt.y, pt.z);
+    let c = na::Vector3::new(pt.x, pt.y, 0.0).cross(&e);
+    c
+}
 
 fn handle_kevent(
     key: Option<sdl2::keyboard::Keycode>,
@@ -185,55 +226,52 @@ fn handle_kevent(
     cam: &Camera,
 ) -> Option<Camera> {
     key.map(|code| match code {
+        // naked  => camera
+        // contol => eye
+        // shift  => target
         sdl2::keyboard::Keycode::Left => match_mod(
             kmod,
-            || rotate_cam(na::Vector3::new(0.0, 0.0, 1.0), -CAM_STEP_ROT, cam),
             || {
                 move_cam(
                     na::Translation3::new(-CAMP_STEP, 0.0, 0.0).to_homogeneous(),
                     cam,
                 )
             },
+            || rotate_eye(na::Vector3::new(0.0, 0.0, 1.0), -CAM_STEP_ROT, cam),
+            || rotate_target(na::Vector3::new(0.0, 0.0, 1.0), -CAM_STEP_ROT, cam),
         ),
         sdl2::keyboard::Keycode::Right => match_mod(
             kmod,
-            || rotate_cam(na::Vector3::new(0.0, 0.0, 1.0), CAM_STEP_ROT, cam),
             || {
                 move_cam(
                     na::Translation3::new(CAMP_STEP, 0.0, 0.0).to_homogeneous(),
                     cam,
                 )
             },
+            || rotate_eye(na::Vector3::new(0.0, 0.0, 1.0), CAM_STEP_ROT, cam),
+            || rotate_target(na::Vector3::new(0.0, 0.0, 1.0), CAM_STEP_ROT, cam),
         ),
         sdl2::keyboard::Keycode::Up => match_mod(
             kmod,
             || {
-                let e = na::Vector3::new(cam.eye.x, cam.eye.y, cam.eye.z);
-                let c = na::Vector3::new(cam.eye.x, cam.eye.y, 0.0).cross(&e);
-
-                rotate_cam(c, CAM_STEP_ROT, cam)
-            },
-            || {
-                move_target(
-                    na::Translation3::new(0.0, 0.0, CAMP_STEP).to_homogeneous(),
+                move_cam(
+                    na::Translation3::new(0.0, CAMP_STEP, 0.0).to_homogeneous(),
                     cam,
                 )
             },
+            || rotate_eye(get_horizontal_axis(cam.eye), CAM_STEP_ROT, cam),
+            || rotate_target(get_horizontal_axis(cam.eye), CAM_STEP_ROT, cam),
         ),
         sdl2::keyboard::Keycode::Down => match_mod(
             kmod,
             || {
-                let e = na::Vector3::new(cam.eye.x, cam.eye.y, cam.eye.z);
-                let c = na::Vector3::new(cam.eye.x, cam.eye.y, 0.0).cross(&e);
-
-                rotate_cam(c, -CAM_STEP_ROT, cam)
-            },
-            || {
-                move_target(
-                    na::Translation3::new(0.0, 0.0, -CAMP_STEP).to_homogeneous(),
+                move_cam(
+                    na::Translation3::new(0.0, -CAMP_STEP, 0.0).to_homogeneous(),
                     cam,
                 )
             },
+            || rotate_eye(get_horizontal_axis(cam.eye), -CAM_STEP_ROT, cam),
+            || rotate_target(get_horizontal_axis(cam.eye), -CAM_STEP_ROT, cam),
         ),
         _ => cam.clone(),
     })
@@ -286,8 +324,6 @@ fn draw_planes(pl: &PlaneList, cam: &Camera, sdl_texture: &mut sdl2::render::Tex
                 stride as i32,
             ).unwrap();
 
-            // let surface = ImageSurface::create(Format::ARgb32, screen_width, screen_height)
-            //     .expect("Couldn’t create a surface!");
             let context = Context::new(&surface);
 
             context.set_source_rgb(1.0, 1.0, 1.0);
@@ -298,42 +334,10 @@ fn draw_planes(pl: &PlaneList, cam: &Camera, sdl_texture: &mut sdl2::render::Tex
             let iscale = f64::from(sdl_query.width) / scale;
             let target_ref = Point::new(cam.target.x, cam.target.y, cam.target.z + 10.0);
 
-            // let center = Point::new(149144.0, 171151.0, scale);
-            // let bottom_left_near = Point::new(center.x - scale, center.y - scale, 0.0);
-            // let top_right_far = Point::new(center.x + scale, center.y + scale, 2.0 * scale);
-
-            // let eye = top_right_far; //Point3::new(149140.0 - 20.0, 171151.0, 1.0);
-            // let target = center; //Point3::new(149144.0, 171151.0 - 100.0, 40.0);
-
             let indices = sort_planes(cam.eye, pl);
 
             let view = Isometry3::look_at_lh(&cam.eye, &cam.target, &Vector3::z()).to_homogeneous();
 
-            // let view_bl = view.transform_point(&bottom_left_near);
-            // let view_tr = view.transform_point(&top_right_far);
-            // let left = view_bl.x;
-            // let bottom = view_bl.y;
-            // let right = view_tr.x;
-            // let top = view_tr.y;
-            // let near = view_bl.z;
-            // let far = view_tr.z;
-
-            // println!("left   {}", left);
-            // println!("bottom {}", bottom);
-            // println!("right  {}", right);
-            // println!("top    {}", top);
-            // println!("near   {}", near);
-            // println!("far    {}", far);
-            // println!("--");
-
-            // let proj_o = if near < far {
-            //     na::geometry::Orthographic3::new(-iscale, iscale, -iscale, iscale, near, far)
-            //         .unwrap()
-            // } else {
-            //     na::geometry::Orthographic3::new(-iscale, iscale, -iscale, iscale, far, near)
-            //         .unwrap()
-            // };
-            // let _proj_p = Perspective3::new(1.0, 3.14 / 4.0, 10.0, 100.0).unwrap();
             let proj_o =
                 na::geometry::Orthographic3::new(-iscale, iscale, -iscale, iscale, 0.0, scale)
                     .unwrap();
@@ -350,16 +354,7 @@ fn draw_planes(pl: &PlaneList, cam: &Camera, sdl_texture: &mut sdl2::render::Tex
                 na::Matrix3::new_rotation(-target_ref_angle)
             };
 
-            // let projected_bl = vp.transform_point(&bottom_left_near);
-            // let projected_tr = vp.transform_point(&top_right_far);
-            // let _projected_width = projected_tr.x - projected_bl.x;
-            // let ratio = f64::from(screen_width) / projected_width;
             let translation = f64::from(sdl_query.width) / 2.0;
-            // println!("projected_bl {}", projected_bl);
-            // println!("projected_tr {}", projected_tr);
-            // println!("translation  {}", translation);
-            // println!("--");
-
             let tr = na::Translation2::new(translation, translation).to_homogeneous();
 
             indices.iter().for_each(|index| {
@@ -389,37 +384,6 @@ fn draw_planes(pl: &PlaneList, cam: &Camera, sdl_texture: &mut sdl2::render::Tex
                 context.set_source_rgb(0.0, 0.0, 0.0);
                 context.stroke();
             });
-            // let mut pp = vp.transform_point(&bottom_left_near);
-            // println!("bottom_left           {}", bottom_left_near);
-            // println!(
-            //     "bottom_left * view    {}",
-            //     view.transform_point(&bottom_left_near)
-            // );
-            // println!(
-            //     "bottom_left * proj_o  {}",
-            //     proj_o.transform_point(&bottom_left_near)
-            // );
-            // println!("bottom_left * vp      {}", pp);
-            // println!("view_bottom_left * tr      {}", tr.transform_point(&pp));
-            // println!("--");
-
-            // pp = vp.transform_point(&top_right_far);
-            // println!("top_right           {}", top_right_far);
-            // println!(
-            //     "top_right * view    {}",
-            //     view.transform_point(&top_right_far)
-            // );
-            // println!(
-            //     "top_right * proj_o  {}",
-            //     proj_o.transform_point(&top_right_far)
-            // );
-            // println!("top_right * vp      {}", pp);
-            // println!("view_top_right * tr      {}", tr.transform_point(&pp));
-
-            // let mut file = File::create("output.png").expect("Couldn’t create file.");
-            // surface
-            //     .write_to_png(&mut file)
-            //     .expect("Couldn’t write to png");
         }).unwrap();
 }
 
@@ -434,75 +398,76 @@ fn main() {
     let mut event_pump = sdl.event_pump().unwrap();
 
     let args: Vec<String> = env::args().collect();
-    let filename = &args[1];
+    let data_fn = &args[1];
+    let style_fn = &args[2];
 
-    let pl = load_geojson(filename).map(|gj| extract_features(gj));
+    let gj = load_geojson(data_fn).unwrap();
+    let pl = get_planes(&gj);
+    let props = get_properties(&gj);
+    let sj = load_style(style_fn).unwrap();
+    let mut style = StyleList::from_config(&sj);
+    style.apply(&props);
 
-    match pl {
-        Err(_) => println!("failed"),
-        Ok(pl) => {
-            println!("N {}", pl.len());
+    println!("N {}", pl.len());
 
-            let bbox = BBox::from_planes(&pl);
-            let mut camera = Camera {
-                eye: bbox.top_left_near(),
-                target: bbox.center(),
-            };
-            let mut canvas = sdl2::render::CanvasBuilder::new(window).build().unwrap();
-            canvas.set_draw_color(sdl2::pixels::Color::RGB(100, 100, 100));
-            canvas.clear();
-            let texture_creator = canvas.texture_creator();
-            let mut sdl_texture: sdl2::render::Texture = texture_creator
-                .create_texture(
-                    Some(sdl2::pixels::PixelFormatEnum::ABGR8888),
-                    sdl2::render::TextureAccess::Streaming,
-                    800,
-                    800,
-                ).unwrap();
+    let bbox = BBox::from_planes(&pl);
+    let mut camera = Camera {
+        eye: bbox.top_left_near(),
+        target: bbox.center(),
+    };
+    let mut canvas = sdl2::render::CanvasBuilder::new(window).build().unwrap();
+    canvas.set_draw_color(sdl2::pixels::Color::RGB(100, 100, 100));
+    canvas.clear();
+    let texture_creator = canvas.texture_creator();
+    let mut sdl_texture: sdl2::render::Texture = texture_creator
+        .create_texture(
+            Some(sdl2::pixels::PixelFormatEnum::ABGR8888),
+            sdl2::render::TextureAccess::Streaming,
+            800,
+            800,
+        ).unwrap();
 
-            let mut dirty = true;
+    let mut dirty = true;
 
-            'main: loop {
-                for event in event_pump.poll_iter() {
-                    match event {
-                        sdl2::event::Event::Quit { .. } => break 'main,
-                        sdl2::event::Event::KeyDown {
-                            keycode, keymod, ..
-                        } => {
-                            match handle_kevent(keycode, keymod, &camera) {
-                                Some(c) => {
-                                    camera = c;
+    'main: loop {
+        for event in event_pump.poll_iter() {
+            match event {
+                sdl2::event::Event::Quit { .. } => break 'main,
+                sdl2::event::Event::KeyDown {
+                    keycode, keymod, ..
+                } => {
+                    match handle_kevent(keycode, keymod, &camera) {
+                        Some(c) => {
+                            camera = c;
 
-                                    dirty = true;
-                                }
-                                None => (),
-                            };
-                            println!("> {:?}", camera);
+                            dirty = true;
                         }
-                        _ => {}
-                    }
-                }
-
-                // render window contents here
-                if dirty {
-                    canvas.clear();
-                    draw_planes(&pl, &camera, &mut sdl_texture);
-                    match canvas.copy(&sdl_texture, None, None) {
-                        Ok(_) => {
-                            canvas.present();
-                            dirty = false;
-                        }
-                        _ => dirty = true,
+                        None => (),
                     };
+                    println!("> {:?}", camera);
                 }
-                // let result = canvas.with_texture_canvas(&mut texture, |texture_canvas| {
-                //     texture_canvas.set_draw_color(Color::RGBA(0, 0, 0, 255));
-                //     texture_canvas.clear();
-                //     texture_canvas.set_draw_color(Color::RGBA(255, 0, 0, 255));
-                //     texture_canvas.fill_rect(Rect::new(50, 50, 50, 50)).unwrap();
-                // });
-                std::thread::sleep(std::time::Duration::from_millis(10));
+                _ => {}
             }
         }
+
+        // render window contents here
+        if dirty {
+            canvas.clear();
+            draw_planes(&pl, &camera, &mut sdl_texture);
+            match canvas.copy(&sdl_texture, None, None) {
+                Ok(_) => {
+                    canvas.present();
+                    dirty = false;
+                }
+                _ => dirty = true,
+            };
+        }
+        // let result = canvas.with_texture_canvas(&mut texture, |texture_canvas| {
+        //     texture_canvas.set_draw_color(Color::RGBA(0, 0, 0, 255));
+        //     texture_canvas.clear();
+        //     texture_canvas.set_draw_color(Color::RGBA(255, 0, 0, 255));
+        //     texture_canvas.fill_rect(Rect::new(50, 50, 50, 50)).unwrap();
+        // });
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
