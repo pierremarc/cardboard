@@ -188,7 +188,7 @@ impl StyleList {
         let mut sl = StyleList::new();
         match style_config {
             PolygonStyleConfig::Simple(config) => {
-                println!("Insert Simple Style {:?}", config);
+                // println!("Insert Simple Style {:?}", config);
                 sl.add(
                     Style::new(StyleConfig::Simple)
                         .width(config.strokeWidth)
@@ -198,7 +198,7 @@ impl StyleList {
             }
             PolygonStyleConfig::Continuous(config) => {
                 config.intervals.iter().for_each(|it| {
-                    println!("Insert Continuous Style {:?}", it);
+                    // println!("Insert Continuous Style {:?}", it);
                     sl.add(
                         Style::new(StyleConfig::Continuous(StyleConfigContinuous {
                             prop_name: config.propName.clone(),
@@ -212,7 +212,7 @@ impl StyleList {
             }
             PolygonStyleConfig::Discrete(config) => {
                 config.groups.iter().for_each(|it| {
-                    println!("Insert Discrete Style {:?}", it);
+                    // println!("Insert Discrete Style {:?}", it);
                     sl.add(
                         Style::new(StyleConfig::Discrete(StyleConfigDiscrete {
                             prop_name: config.propName.clone(),
@@ -239,13 +239,13 @@ impl StyleList {
                     StyleConfig::Continuous(config) => properties.clone().map_or(false, |props| {
                         props.get(&config.prop_name).map_or(false, |v| {
                             v.as_f64().map_or(false, |n| {
-                                println!(
-                                    "StyleConfig::Continuous {} {} {} => {}",
-                                    n,
-                                    config.low,
-                                    config.high,
-                                    n >= config.low && n < config.high,
-                                );
+                                // println!(
+                                //     // "StyleConfig::Continuous {} {} {} => {}",
+                                //     n,
+                                //     config.low,
+                                //     config.high,
+                                //     n >= config.low && n < config.high,
+                                // );
                                 n >= config.low && n < config.high
                             })
                         })

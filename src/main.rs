@@ -4,6 +4,7 @@ extern crate geojson;
 extern crate libc;
 extern crate nalgebra;
 extern crate ordered_float;
+extern crate rayon;
 extern crate sdl2;
 extern crate serde;
 extern crate serde_json;
@@ -26,10 +27,12 @@ use nalgebra::geometry::Isometry3;
 use nalgebra::geometry::{Point2, Point3};
 use nalgebra::Vector3;
 use ordered_float::OrderedFloat;
+use rayon::prelude::*;
 use serde_json::{Map, Value as JsonValue};
 use std::cmp;
 use std::env;
 use std::fs::File;
+use std::io::prelude::*;
 use style::{load_style, Properties, StyleList};
 use surface_data::create_for_data_unsafe;
 use time::PreciseTime;
@@ -279,6 +282,7 @@ fn handle_key_event(
     kmod: sdl2::keyboard::Mod,
     cam: &Camera,
     initial_camera: &Camera,
+    capture: &mut Capture,
 ) -> Option<Camera> {
     key.and_then(|code| {
         match code {
@@ -286,6 +290,14 @@ fn handle_key_event(
             // contol => eye
             // shift  => target
             sdl2::keyboard::Keycode::R => Some(*initial_camera),
+            sdl2::keyboard::Keycode::C => {
+                capture.toggle();
+                None
+            }
+            sdl2::keyboard::Keycode::S => {
+                capture.save("capture.cardboard");
+                None
+            }
             sdl2::keyboard::Keycode::Left => match_mod(
                 kmod,
                 || move_cam(side_mov(&cam, -CAMP_STEP), cam),
@@ -312,8 +324,8 @@ fn handle_key_event(
 }
 
 fn handle_motion_event(xrel: i32, yrel: i32, cam: &Camera) -> Option<Camera> {
-    let ox = f64::from(xrel) / -6.0;
-    let oy = f64::from(yrel) / -6.0;
+    let ox = f64::from(xrel) / 6.0;
+    let oy = f64::from(yrel) / 6.0;
 
     let horizontal_axis = get_horizontal_axis(cam);
     let vertical_axis = na::Unit::new_normalize(na::Vector3::new(0.0, 0.0, 1.0));
@@ -344,26 +356,35 @@ fn handle_wheel_event(y: i32, cam: &Camera) -> Option<Camera> {
 
 fn sort_planes(p: Point, pl: &PlaneList) -> Vec<usize> {
     let mut indices: Vec<usize> = Vec::with_capacity(pl.len());
-    let mut distances: Vec<OrderedFloat<f64>> = Vec::with_capacity(pl.len());
+    // let mut distances: Vec<OrderedFloat<f64>> = Vec::with_capacity(pl.len());
 
     let start = PreciseTime::now();
     for i in 0..pl.len() {
         indices.push(i);
-        distances.push(pl[i].iter().fold(OrderedFloat(0.0), |acc, v| {
-            cmp::max(OrderedFloat(distance_squared(&p, v)), acc)
-        }));
+        // distances.push(pl[i].iter().fold(OrderedFloat(0.0), |acc, v| {
+        //     cmp::max(OrderedFloat(distance_squared(&p, v)), acc)
+        // }));
     }
+
+    let distances: Vec<OrderedFloat<f64>> = indices
+        .par_iter()
+        .map(|i| {
+            pl[i.to_owned()].iter().fold(OrderedFloat(0.0), |acc, v| {
+                cmp::max(OrderedFloat(distance_squared(&p, v)), acc)
+            })
+        }).collect();
+
     let end = PreciseTime::now();
     println!("Distances in {}", start.to(end));
 
-    indices.sort_unstable_by(|a, b| {
+    indices.par_sort_unstable_by(|a, b| {
         let da = &distances[a.to_owned()];
         let db = &distances[b.to_owned()];
 
         if da < db {
-            cmp::Ordering::Less
-        } else if da > db {
             cmp::Ordering::Greater
+        } else if da > db {
+            cmp::Ordering::Less
         } else {
             cmp::Ordering::Equal
         }
@@ -375,6 +396,38 @@ fn sort_planes(p: Point, pl: &PlaneList) -> Vec<usize> {
 }
 
 // type M3 = na::Matrix3<f64>;
+
+fn make_cross(pt: Point, cin: f64, cout: f64) -> Plane {
+    let x = pt.x;
+    let y = pt.y;
+    let z = pt.z;
+    vec![
+        Point::new(x - cin, y + cin, z),
+        Point::new(x - cin, y + cout, z),
+        Point::new(x + cin, y + cout, z),
+        Point::new(x + cin, y + cin, z),
+        Point::new(x + cout, y + cin, z),
+        Point::new(x + cout, y - cin, z),
+        Point::new(x + cin, y - cin, z),
+        Point::new(x + cin, y - cout, z),
+        Point::new(x - cin, y - cout, z),
+        Point::new(x - cin, y - cin, z),
+        Point::new(x - cout, y - cin, z),
+        Point::new(x - cout, y + cin, z),
+    ]
+}
+
+fn transform2d(
+    aligned_point3d: &Point,
+    corrective: &na::Matrix3<f64>,
+    scale: f64,
+    tr: &na::Matrix3<f64>,
+) -> na::Point2<f64> {
+    let aligned_point = na::Point2::new(aligned_point3d.x, aligned_point3d.y);
+    let rotated = corrective.transform_point(&aligned_point);
+    let scaled = rotated * scale;
+    tr.transform_point(&scaled)
+}
 
 fn draw_planes(
     pl: &PlaneList,
@@ -399,21 +452,21 @@ fn draw_planes(
             context.set_source_rgb(1.0, 1.0, 1.0);
             context.paint();
 
-            // 149144.0	171151.0
+            // 149144.0	17115cout
             let scale = na::distance(&cam.eye, &cam.target).abs();
             let iscale = f64::from(sdl_query.width) / scale;
             let target_ref = Point::new(cam.target.x, cam.target.y, cam.target.z + 10.0);
 
             let indices = sort_planes(cam.eye, pl);
 
-            let view = Isometry3::look_at_lh(&cam.eye, &cam.target, &Vector3::z()).to_homogeneous();
+            let view = Isometry3::look_at_rh(&cam.eye, &cam.target, &Vector3::z()).to_homogeneous();
 
             println!(
                 "Orthographic3::new({}, {}, {}, {}, {}, {})",
                 -iscale, iscale, -iscale, iscale, 0.0, scale
             );
             let proj_o =
-                na::geometry::Orthographic3::new(-iscale, iscale, -iscale, iscale, 0.0, scale)
+                na::geometry::Orthographic3::new(-iscale, iscale, -iscale, iscale, 1.0, scale)
                     .unwrap();
             let vp = proj_o * view;
 
@@ -431,42 +484,252 @@ fn draw_planes(
             let translation = f64::from(sdl_query.width) / 2.0;
             let tr = na::Translation2::new(translation, translation).to_homogeneous();
 
+            let clip_z = view.transform_point(&cam.eye).z;
+
+            let mut started = false;
+            context.new_path();
+            make_cross(cam.target, 1.0, 2.0)
+                .iter()
+                .map(|pt| vp.transform_point(pt))
+                .map(|pt| transform2d(&pt, &corrective, scale, &tr))
+                .for_each(|pt| {
+                    if started {
+                        context.line_to(pt.x, pt.y);
+                    } else {
+                        started = true;
+                        context.move_to(pt.x, pt.y);
+                    }
+                });
+            context.close_path();
+            context.set_line_width(0.2);
+            context.set_source_rgb(1.0, 0.0, 0.0);
+            // context.fill_preserve();
+            context.stroke();
+
             indices.iter().for_each(|index| {
                 // println!("drawing {}", index);
                 let mut started = false;
                 let plane = &pl[index.to_owned()];
                 context.new_path();
 
-                plane.iter().for_each(|pt| {
-                    let aligned_point3d = vp.transform_point(pt);
-                    let aligned_point = na::Point2::new(aligned_point3d.x, aligned_point3d.y);
-                    let rotated = corrective.transform_point(&aligned_point);
-                    let scaled = rotated * scale;
-                    let translated = tr.transform_point(&scaled);
+                // let vs: Plane = plane.iter().map(|pt| view.transform_point(pt)).collect();
+                let als: Plane = plane.iter().map(|pt| vp.transform_point(pt)).collect();
+                let is_in_front = plane.iter().any(|p| {
+                    // p.x > -iscale
+                    //     && p.x < iscale
+                    //     && p.y > -iscale
+                    //     && p.y < iscale
+                    //     && p.z > 0.0
+                    //     && p.z < scale
+                    view.transform_point(p).z < clip_z
+                });
+
+                if is_in_front {
+                    als.iter().for_each(|aligned_point3d| {
+                        let translated = transform2d(aligned_point3d, &corrective, scale, &tr);
+                        if started {
+                            context.line_to(translated.x, translated.y);
+                        // println!("  LINE {} {} ({})", pp[0], pp[1], pp[2])
+                        } else {
+                            started = true;
+                            context.move_to(translated.x, translated.y);
+                            // println!("MOVE {} {}", tp[0], tp[1])
+                        }
+                    });
+                    context.close_path();
+                    style_list.get_for(index).map(|s| {
+                        s.fillColor.map(|color| {
+                            context.set_source_rgba(
+                                color.red,
+                                color.green,
+                                color.blue,
+                                color.alpha,
+                            );
+                            context.fill_preserve();
+                        });
+
+                        s.strokeColor.map(|color| {
+                            context.set_line_width(s.strokeWidth);
+                            context.set_source_rgba(
+                                color.red,
+                                color.green,
+                                color.blue,
+                                color.alpha,
+                            );
+                            context.stroke();
+                        });
+                    });
+                }
+            });
+
+            started = false;
+            context.new_path();
+            make_cross(cam.eye, 0.5, 1.0)
+                .iter()
+                .map(|pt| vp.transform_point(pt))
+                .map(|pt| transform2d(&pt, &corrective, scale, &tr))
+                .for_each(|pt| {
                     if started {
-                        context.line_to(translated.x, translated.y);
-                    // println!("  LINE {} {} ({})", pp[0], pp[1], pp[2])
+                        context.line_to(pt.x, pt.y);
                     } else {
                         started = true;
-                        context.move_to(translated.x, translated.y);
-                        // println!("MOVE {} {}", tp[0], tp[1])
+                        context.move_to(pt.x, pt.y);
                     }
                 });
-                context.close_path();
-                style_list.get_for(index).map(|s| {
-                    s.fillColor.map(|color| {
-                        context.set_source_rgba(color.red, color.green, color.blue, color.alpha);
-                        context.fill_preserve();
-                    });
+            context.close_path();
+            context.set_line_width(0.2);
+            context.set_source_rgb(0.0, 0.0, 1.0);
+            context.stroke();
 
-                    s.strokeColor.map(|color| {
-                        context.set_line_width(s.strokeWidth);
-                        context.set_source_rgba(color.red, color.green, color.blue, color.alpha);
-                        context.stroke();
-                    });
-                });
-            });
+            // let eye_t = transform2d(&vp.transform_point(&cam.eye), &corrective, scale, &tr);
+            // let tar_t = transform2d(&vp.transform_point(&cam.target), &corrective, scale, &tr);
+            // context.new_path();
+            // context.move_to(tar_t.x, tar_t.y);
+            // context.line_to(eye_t.x, eye_t.y);
+            // context.set_line_width(2.0);
+            // context.set_source_rgb(1.0, 1.0, 0.0);
+            // context.stroke();
+
+            // println!(
+            //     "--\n{}\n{}\n--",
+            //     view.transform_point(&cam.eye),
+            //     view.transform_point(&cam.target)
+            // );
         }).unwrap();
+}
+
+struct Frame {
+    timestamp: u32,
+    camera: Camera,
+}
+
+fn get_field<T>(i: usize, v: &Vec<&str>) -> Result<T, usize>
+where
+    T: std::str::FromStr,
+{
+    match v.get(i) {
+        Some(s) => s.parse::<T>().map_err(|_| i),
+        None => Err(i),
+    }
+}
+
+impl Frame {
+    fn new(timestamp: u32, camera: Camera) -> Frame {
+        Frame { timestamp, camera }
+    }
+
+    fn to_record(&self) -> String {
+        format!(
+            "{} {} {} {} {} {} {}\n",
+            self.timestamp,
+            self.camera.eye.x,
+            self.camera.eye.y,
+            self.camera.eye.z,
+            self.camera.target.x,
+            self.camera.target.y,
+            self.camera.target.z,
+        )
+    }
+
+    fn from_record(r: &str) -> Result<Frame, usize> {
+        let fields = r.split(" ").collect();
+
+        let timestamp = get_field::<u32>(0, &fields)?;
+        let cam_x = get_field::<f64>(1, &fields)?;
+        let cam_y = get_field::<f64>(2, &fields)?;
+        let cam_z = get_field::<f64>(3, &fields)?;
+        let target_x = get_field::<f64>(4, &fields)?;
+        let target_y = get_field::<f64>(5, &fields)?;
+        let target_z = get_field::<f64>(6, &fields)?;
+
+        Ok(Frame::new(
+            timestamp,
+            Camera {
+                eye: Point::new(cam_x, cam_y, cam_z),
+                target: Point::new(target_x, target_y, target_z),
+            },
+        ))
+    }
+}
+
+struct Capture {
+    on: bool,
+    frames: Vec<Frame>,
+}
+
+impl Capture {
+    fn new() -> Capture {
+        Capture {
+            on: false,
+            frames: Vec::new(),
+        }
+    }
+
+    fn toggle(&mut self) {
+        if self.on {
+            self.on = false;
+        } else {
+            self.on = true;
+            self.frames = Vec::new();
+        }
+    }
+
+    fn map(&mut self, timetamp: u32, camera: Camera) {
+        if self.on {
+            self.frames.push(Frame::new(timetamp, camera));
+        }
+    }
+
+    fn save(&self, file_path: &str) -> std::io::Result<()> {
+        let mut file = File::create(file_path)?;
+        let mut err_count = 0;
+        self.frames.iter().for_each(|frame| {
+            let rec = frame.to_record();
+            match file.write(rec.as_bytes()) {
+                Err(_) => err_count += 1,
+                _ => (),
+            };
+        });
+
+        println!("Saved {} with {} errors", file_path, err_count);
+
+        Ok(())
+    }
+
+    fn from_records(file_path: &str) -> std::io::Result<Capture> {
+        let records = std::fs::read_to_string(file_path)?;
+        let mut frames: Vec<Frame> = Vec::new();
+
+        records.lines().for_each(|r| {
+            Frame::from_record(r).map(|f| frames.push(f));
+        });
+
+        Ok(Capture { on: false, frames })
+    }
+}
+
+fn update_cam(
+    oc: Option<Camera>,
+    timestamp: u32,
+    dirty: &mut bool,
+    camera: &mut Camera,
+    capture: &mut Capture,
+) {
+    match oc {
+        Some(c) => {
+            *camera = c;
+            *dirty = true;
+            capture.map(timestamp, c);
+        }
+        None => (),
+    };
+}
+
+fn replay(capture: &Capture) {
+    capture
+        .frames
+        .iter()
+        .for_each(|f| println!("R> {}", f.timestamp));
 }
 
 fn main() {
@@ -484,6 +747,11 @@ fn main() {
     let data_fn = &args[1];
     let style_fn = &args[2];
 
+    if args.len() == 4 {
+        let cap_file = &args[3];
+        Capture::from_records(cap_file).map(|c| replay(&c));
+    }
+
     let gj = load_geojson(data_fn).unwrap();
     let pl = get_planes(&gj);
     let props = get_properties(&gj);
@@ -497,8 +765,8 @@ fn main() {
     let bbox = BBox::from_planes(&pl);
     let center = bbox.center();
     let initial_camera = Camera {
-        eye: center,
-        target: bbox.top_left_near(),
+        eye: bbox.top_left_near(),
+        target: center,
     };
     let mut camera = initial_camera;
 
@@ -508,46 +776,63 @@ fn main() {
     let texture_creator = canvas.texture_creator();
     let mut sdl_texture: sdl2::render::Texture = texture_creator
         .create_texture(
-            Some(sdl2::pixels::PixelFormatEnum::ABGR8888),
+            Some(sdl2::pixels::PixelFormatEnum::ARGB8888),
             sdl2::render::TextureAccess::Streaming,
             800,
             800,
         ).unwrap();
 
     let mut dirty = true;
+    let mut key_control = false;
+    let control_mod = sdl2::keyboard::LCTRLMOD;
+
+    let mut capture = Capture::new();
 
     'main: loop {
         for event in event_pump.poll_iter() {
             match event {
                 sdl2::event::Event::Quit { .. } => break 'main,
                 sdl2::event::Event::KeyDown {
-                    keycode, keymod, ..
+                    keycode,
+                    keymod,
+                    timestamp,
+                    ..
                 } => {
-                    match handle_key_event(keycode, keymod, &camera, &initial_camera) {
-                        Some(c) => {
-                            camera = c;
-                            dirty = true;
-                        }
-                        None => (),
-                    };
-                    println!("> {:?}", camera);
+                    key_control = keymod.contains(control_mod);
+                    update_cam(
+                        handle_key_event(keycode, keymod, &camera, &initial_camera, &mut capture),
+                        timestamp,
+                        &mut dirty,
+                        &mut camera,
+                        &mut capture,
+                    );
                 }
-                sdl2::event::Event::MouseMotion { xrel, yrel, .. } => {
-                    match handle_motion_event(xrel, yrel, &camera) {
-                        Some(c) => {
-                            camera = c;
-                            dirty = true;
-                        }
-                        None => (),
+                sdl2::event::Event::MouseMotion {
+                    xrel,
+                    yrel,
+                    timestamp,
+                    ..
+                } => {
+                    if key_control {
+                        update_cam(
+                            handle_motion_event(xrel, yrel, &camera),
+                            timestamp,
+                            &mut dirty,
+                            &mut camera,
+                            &mut capture,
+                        );
                     }
                 }
-                sdl2::event::Event::MouseWheel { y, .. } => match handle_wheel_event(y, &camera) {
-                    Some(c) => {
-                        camera = c;
-                        dirty = true;
-                    }
-                    None => (),
-                },
+                sdl2::event::Event::MouseWheel { y, timestamp, .. } => {
+                    update_cam(
+                        handle_wheel_event(y, &camera),
+                        timestamp,
+                        &mut dirty,
+                        &mut camera,
+                        &mut capture,
+                    );
+                }
+
                 _ => {}
             }
         }
