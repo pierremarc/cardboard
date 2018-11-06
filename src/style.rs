@@ -1,8 +1,7 @@
+use lingua::Properties;
 use serde_json;
 use std::fs;
 use svgtypes::Color as CSSColor;
-
-pub type Properties = std::option::Option<serde_json::Map<std::string::String, serde_json::Value>>;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Color {

@@ -1,0 +1,217 @@
+use camera::Camera;
+use lingua::PlaneList;
+use lingua::Point;
+use nalgebra::distance_squared;
+use ordered_float::OrderedFloat;
+use rayon::prelude::*;
+use std::cmp;
+use style::StyleList;
+use surface_data::create_for_data_unsafe;
+use time::PreciseTime;
+
+fn sort_planes(p: Point, pl: &PlaneList) -> Vec<usize> {
+    let mut indices: Vec<usize> = Vec::with_capacity(pl.len());
+
+    // let start = PreciseTime::now();
+    for i in 0..pl.len() {
+        indices.push(i);
+    }
+
+    let distances: Vec<OrderedFloat<f64>> = indices
+        .par_iter()
+        .map(|i| {
+            pl[i.to_owned()].iter().fold(OrderedFloat(0.0), |acc, v| {
+                cmp::max(OrderedFloat(distance_squared(&p, v)), acc)
+            })
+        }).collect();
+
+    let end = PreciseTime::now();
+    // println!("Distances in {}", start.to(end));
+
+    indices.par_sort_unstable_by(|a, b| {
+        let da = &distances[a.to_owned()];
+        let db = &distances[b.to_owned()];
+
+        if da < db {
+            cmp::Ordering::Greater
+        } else if da > db {
+            cmp::Ordering::Less
+        } else {
+            cmp::Ordering::Equal
+        }
+    });
+
+    indices
+}
+
+pub fn draw_planes(
+    pl: &PlaneList,
+    cam: &Camera,
+    sdl_texture: &mut sdl2::render::Texture,
+    style_list: &StyleList,
+) {
+    let sdl_query = sdl_texture.query();
+    let rect = sdl2::rect::Rect::new(0, 0, sdl_query.width, sdl_query.height);
+    sdl_texture
+        .with_lock(Some(rect), |sdl_data, stride| {
+            let surface = create_for_data_unsafe(
+                sdl_data,
+                cairo::Format::ARgb32,
+                sdl_query.width as i32,
+                sdl_query.height as i32,
+                stride as i32,
+            ).unwrap();
+
+            let context = Context::new(&surface);
+
+            context.set_source_rgb(1.0, 1.0, 1.0);
+            context.paint();
+
+            // 149144.0	17115cout
+            let scale = na::distance(&cam.eye, &cam.target).abs();
+            let iscale = f64::from(sdl_query.width) / scale;
+            let target_ref = Point::new(cam.target.x, cam.target.y, cam.target.z + 10.0);
+
+            let indices = sort_planes(cam.eye, pl);
+
+            let view = Isometry3::look_at_rh(&cam.eye, &cam.target, &Vector3::z()).to_homogeneous();
+
+            println!(
+                "Orthographic3::new({}, {}, {}, {}, {}, {})",
+                -iscale, iscale, -iscale, iscale, 0.0, scale
+            );
+            // let proj_o =
+            //     na::geometry::Orthographic3::new(-iscale, iscale, -iscale, iscale, 1.0, scale)
+            //         .unwrap();
+            let proj_o =
+                na::geometry::Orthographic3::new(-iscale, iscale, -iscale, iscale, -scale, 1.0)
+                    .unwrap();
+            let vp = proj_o * view;
+
+            let projected_target_ref = vp.transform_point(&target_ref);
+            let target_ref_angle = na::angle(
+                &na::Vector2::new(0.0, -1.0),
+                &na::Vector2::new(projected_target_ref.x, projected_target_ref.y),
+            );
+            let corrective = if projected_target_ref.x < 0.0 {
+                na::Matrix3::new_rotation(target_ref_angle)
+            } else {
+                na::Matrix3::new_rotation(-target_ref_angle)
+            };
+
+            let translation = f64::from(sdl_query.width) / 2.0;
+            let tr = na::Translation2::new(translation, translation).to_homogeneous();
+
+            let clip_z = view.transform_point(&cam.eye).z;
+
+            let mut started = false;
+            context.new_path();
+            make_cross(cam.target, 1.0, 2.0)
+                .iter()
+                .map(|pt| vp.transform_point(pt))
+                .map(|pt| transform2d(&pt, &corrective, scale, &tr))
+                .for_each(|pt| {
+                    if started {
+                        context.line_to(pt.x, pt.y);
+                    } else {
+                        started = true;
+                        context.move_to(pt.x, pt.y);
+                    }
+                });
+            context.close_path();
+            context.set_line_width(0.2);
+            context.set_source_rgb(1.0, 0.0, 0.0);
+            // context.fill_preserve();
+            context.stroke();
+
+            indices.iter().for_each(|index| {
+                // println!("drawing {}", index);
+                let mut started = false;
+                let plane = &pl[index.to_owned()];
+                context.new_path();
+
+                // let vs: Plane = plane.iter().map(|pt| view.transform_point(pt)).collect();
+                let als: Plane = plane.iter().map(|pt| vp.transform_point(pt)).collect();
+                let is_in_front = plane.iter().any(|p| {
+                    // p.x > -iscale
+                    //     && p.x < iscale
+                    //     && p.y > -iscale
+                    //     && p.y < iscale
+                    //     && p.z > 0.0
+                    //     && p.z < scale
+                    view.transform_point(p).z < clip_z
+                });
+
+                if is_in_front {
+                    als.iter().for_each(|aligned_point3d| {
+                        let translated = transform2d(aligned_point3d, &corrective, scale, &tr);
+                        if started {
+                            context.line_to(translated.x, translated.y);
+                        // println!("  LINE {} {} ({})", pp[0], pp[1], pp[2])
+                        } else {
+                            started = true;
+                            context.move_to(translated.x, translated.y);
+                            // println!("MOVE {} {}", tp[0], tp[1])
+                        }
+                    });
+                    context.close_path();
+                    style_list.get_for(index).map(|s| {
+                        s.fillColor.map(|color| {
+                            context.set_source_rgba(
+                                color.red,
+                                color.green,
+                                color.blue,
+                                color.alpha,
+                            );
+                            context.fill_preserve();
+                        });
+
+                        s.strokeColor.map(|color| {
+                            context.set_line_width(s.strokeWidth);
+                            context.set_source_rgba(
+                                color.red,
+                                color.green,
+                                color.blue,
+                                color.alpha,
+                            );
+                            context.stroke();
+                        });
+                    });
+                }
+            });
+
+            started = false;
+            context.new_path();
+            make_cross(cam.eye, 0.5, 1.0)
+                .iter()
+                .map(|pt| vp.transform_point(pt))
+                .map(|pt| transform2d(&pt, &corrective, scale, &tr))
+                .for_each(|pt| {
+                    if started {
+                        context.line_to(pt.x, pt.y);
+                    } else {
+                        started = true;
+                        context.move_to(pt.x, pt.y);
+                    }
+                });
+            context.close_path();
+            context.set_line_width(0.2);
+            context.set_source_rgb(0.0, 0.0, 1.0);
+            context.stroke();
+
+            // let eye_t = transform2d(&vp.transform_point(&cam.eye), &corrective, scale, &tr);
+            // let tar_t = transform2d(&vp.transform_point(&cam.target), &corrective, scale, &tr);
+            // context.new_path();
+            // context.move_to(tar_t.x, tar_t.y);
+            // context.line_to(eye_t.x, eye_t.y);
+            // context.set_line_width(2.0);
+            // context.set_source_rgb(1.0, 1.0, 0.0);
+            // context.stroke();
+
+            // println!(
+            //     "--\n{}\n{}\n--",
+            //     view.transform_point(&cam.eye),
+            //     view.transform_point(&cam.target)
+            // );
+        }).unwrap();
+}
