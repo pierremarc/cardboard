@@ -70,7 +70,6 @@ impl Camera {
         let axis = na::Unit::new_normalize(self.target - self.eye);
         let m = axis.unwrap() * step;
         let tr = na::Translation3::from(m);
-
         tr.to_homogeneous()
     }
 }

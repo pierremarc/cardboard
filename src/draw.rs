@@ -17,7 +17,7 @@ use time::PreciseTime;
 fn sort_planes(p: Point, pl: &PlaneList) -> Vec<usize> {
     let mut indices: Vec<usize> = Vec::with_capacity(pl.len());
 
-    // let start = PreciseTime::now();
+    let mut start = PreciseTime::now();
     for i in 0..pl.len() {
         indices.push(i);
     }
@@ -30,9 +30,8 @@ fn sort_planes(p: Point, pl: &PlaneList) -> Vec<usize> {
             })
         }).collect();
 
-    let end = PreciseTime::now();
-    // println!("Distances in {}", start.to(end));
-
+    println!("Distances in {}", start.to(PreciseTime::now()));
+    start = PreciseTime::now();
     indices.par_sort_unstable_by(|a, b| {
         let da = &distances[a.to_owned()];
         let db = &distances[b.to_owned()];
@@ -46,10 +45,11 @@ fn sort_planes(p: Point, pl: &PlaneList) -> Vec<usize> {
         }
     });
 
+    println!("Sort in {}", start.to(PreciseTime::now()));
     indices
 }
 
-pub type PlanePainter = Fn(usize) -> Vec<Operation>;
+// pub type PlanePainter = Fn(usize) -> Vec<Operation>;
 // pub type FlattenedOps = Flatten<Map<std::slice::Iter<'_, usize>>>;
 
 fn draw_index(
@@ -65,33 +65,42 @@ fn draw_index(
     let mut ops: Vec<Operation> = Vec::new();
     let mut started = false;
     let plane = &pl[index];
-    let als: Plane = plane
-        .iter()
-        .map(|pt| view_projection.transform_point(pt))
-        .collect();
-    let is_in_front = plane.iter().any(|p| view.transform_point(p).z < clip_z);
+    let als = plane.iter().map(|pt| view_projection.transform_point(pt));
+    let is_in_front = plane.iter().any(|p| {
+        // println!(
+        //     "{} < {} = {}",
+        //     view.transform_point(p).z,
+        //     clip_z,
+        //     view.transform_point(p).z < clip_z
+        // );
+        view.transform_point(p).z < 0.0
+    });
 
     if is_in_front {
         ops.push(Operation::Begin);
-        als.iter().for_each(|aligned_point3d| {
-            let translated = transform2d(aligned_point3d, &corrective, scale, &tr);
+        als.for_each(|aligned_point3d| {
+            let translated = transform2d(&aligned_point3d, &corrective, scale, &tr);
             if started {
                 ops.push(Operation::Line(translated.to_owned()));
             } else {
+                // println!(
+                //     "M {} {} => {} {}",
+                //     aligned_point3d.x, aligned_point3d.y, translated.x, translated.y
+                // );
                 started = true;
                 ops.push(Operation::Move(translated.to_owned()));
             }
-            ops.push(Operation::Close);
-            ops.push(Operation::Paint(index.to_owned()));
         });
+        ops.push(Operation::Close);
+        ops.push(Operation::Paint(index.to_owned()));
     };
     ops
 }
 
 pub fn draw_planes(pl: &PlaneList, cam: &Camera, style_list: &StyleList, width: f64) -> OpList {
-    // 149144.0	17115cout
-    let scale = na::distance(&cam.eye, &cam.target).abs();
-    let iscale = width / scale;
+    let dist = na::distance(&cam.eye, &cam.target).abs();
+    let scale = dist / 2.0;
+
     let target_ref = Point::new(cam.target.x, cam.target.y, cam.target.z + 10.0);
 
     let indices = sort_planes(cam.eye, pl);
@@ -99,18 +108,22 @@ pub fn draw_planes(pl: &PlaneList, cam: &Camera, style_list: &StyleList, width: 
     let view = na::geometry::Isometry3::look_at_rh(&cam.eye, &cam.target, &na::Vector3::z())
         .to_homogeneous();
 
-    // println!(
-    //     "Orthographic3::new({}, {}, {}, {}, {}, {})",
-    //     -iscale, iscale, -iscale, iscale, 0.0, scale
-    // );
-    // let proj_o =
-    //     na::geometry::Orthographic3::new(-iscale, iscale, -iscale, iscale, 1.0, scale)
-    //         .unwrap();
     let proj_o =
-        na::geometry::Orthographic3::new(-iscale, iscale, -iscale, iscale, -scale, 1.0).unwrap();
-    let vp = proj_o * view;
+        na::geometry::Orthographic3::new(-scale, scale, -scale, scale, -2.0 * scale, 0.0).unwrap();
 
-    let projected_target_ref = vp.transform_point(&target_ref);
+    println!(
+        "Orthographic3::new({}, {}, {}, {}, {}, {})",
+        -scale,
+        scale,
+        -scale,
+        scale,
+        -2.0 * scale,
+        0.0
+    );
+
+    let view_projection = proj_o * view;
+
+    let projected_target_ref = view_projection.transform_point(&target_ref);
     let target_ref_angle = na::angle(
         &na::Vector2::new(0.0, -1.0),
         &na::Vector2::new(projected_target_ref.x, projected_target_ref.y),
@@ -133,10 +146,10 @@ pub fn draw_planes(pl: &PlaneList, cam: &Camera, style_list: &StyleList, width: 
                 index.to_owned(),
                 pl,
                 &view,
-                &vp,
+                &view_projection,
                 &corrective,
                 clip_z,
-                scale,
+                translation,
                 &tr,
             )
         }).flatten()

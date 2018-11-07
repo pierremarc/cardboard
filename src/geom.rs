@@ -30,6 +30,10 @@ pub fn transform2d(
     let aligned_point = na::Point2::new(aligned_point3d.x, aligned_point3d.y);
     let rotated = corrective.transform_point(&aligned_point);
     let scaled = rotated * scale;
+    // println!("transform2d {} {}", scale, tr.column_part(2, 2)[0]);
+    // println!("rotated {} {}", rotated.x, rotated.y);
+    // println!("scaled {} {}", scaled.x, scaled.y);
+    // println!("--");
     tr.transform_point(&scaled)
 }
 
