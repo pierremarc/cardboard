@@ -46,6 +46,7 @@ pub struct Style {
 // }
 
 pub struct StyleList(Vec<Style>, Option<Vec<usize>>);
+pub type StyleCollection = Vec<StyleList>;
 
 fn u2f(v: u8) -> f64 {
     let vf = v as f64;

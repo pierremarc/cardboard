@@ -22,7 +22,7 @@ impl BBox {
         let mut maxz = OrderedFloat(std::f64::MIN);
 
         pl.iter().for_each(|plane| {
-            plane.iter().for_each(|pt| {
+            plane.points.iter().for_each(|pt| {
                 minx = cmp::min(minx, OrderedFloat(pt.x));
                 miny = cmp::min(miny, OrderedFloat(pt.y));
                 minz = cmp::min(minz, OrderedFloat(pt.z));
