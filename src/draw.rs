@@ -1,6 +1,5 @@
 use camera::Camera;
 use geom::transform2d;
-use lingua::Plane;
 use lingua::PlaneList;
 use lingua::Point;
 use nalgebra as na;
@@ -10,9 +9,9 @@ use operation::Operation;
 use ordered_float::OrderedFloat;
 use rayon::prelude::*;
 use std::cmp;
-use std::iter::{Flatten, Map};
-use style::StyleList;
 use time::PreciseTime;
+
+struct Dist(OrderedFloat<f64>, usize);
 
 fn sort_planes(p: Point, pl: &PlaneList) -> Vec<usize> {
     let mut indices: Vec<usize> = Vec::with_capacity(pl.len());
@@ -22,12 +21,14 @@ fn sort_planes(p: Point, pl: &PlaneList) -> Vec<usize> {
         indices.push(i);
     }
 
-    let distances: Vec<OrderedFloat<f64>> = indices
+    let distances: Vec<Dist> = indices
         .par_iter()
         .map(|i| {
-            pl[i.to_owned()].iter().fold(OrderedFloat(0.0), |acc, v| {
+            let plane = &pl[i.to_owned()];
+            let d = plane.points.iter().fold(OrderedFloat(0.0), |acc, v| {
                 cmp::max(OrderedFloat(distance_squared(&p, v)), acc)
-            })
+            });
+            Dist(d, plane.layer_index)
         }).collect();
 
     println!("Distances in {}", start.to(PreciseTime::now()));
@@ -36,12 +37,18 @@ fn sort_planes(p: Point, pl: &PlaneList) -> Vec<usize> {
         let da = &distances[a.to_owned()];
         let db = &distances[b.to_owned()];
 
-        if da < db {
+        if da.0 < db.0 {
             cmp::Ordering::Greater
-        } else if da > db {
+        } else if da.0 > db.0 {
             cmp::Ordering::Less
         } else {
-            cmp::Ordering::Equal
+            if da.1 < db.1 {
+                cmp::Ordering::Greater
+            } else if da.1 > db.1 {
+                cmp::Ordering::Less
+            } else {
+                cmp::Ordering::Equal
+            }
         }
     });
 
@@ -65,16 +72,11 @@ fn draw_index(
     let mut ops: Vec<Operation> = Vec::new();
     let mut started = false;
     let plane = &pl[index];
-    let als = plane.iter().map(|pt| view_projection.transform_point(pt));
-    let is_in_front = plane.iter().any(|p| {
-        // println!(
-        //     "{} < {} = {}",
-        //     view.transform_point(p).z,
-        //     clip_z,
-        //     view.transform_point(p).z < clip_z
-        // );
-        view.transform_point(p).z < 0.0
-    });
+    let als = plane
+        .points
+        .iter()
+        .map(|pt| view_projection.transform_point(pt));
+    let is_in_front = plane.points.iter().any(|p| view.transform_point(p).z < 0.0);
 
     if is_in_front {
         ops.push(Operation::Begin);
@@ -83,21 +85,17 @@ fn draw_index(
             if started {
                 ops.push(Operation::Line(translated.to_owned()));
             } else {
-                // println!(
-                //     "M {} {} => {} {}",
-                //     aligned_point3d.x, aligned_point3d.y, translated.x, translated.y
-                // );
                 started = true;
                 ops.push(Operation::Move(translated.to_owned()));
             }
         });
         ops.push(Operation::Close);
-        ops.push(Operation::Paint(index.to_owned()));
+        ops.push(Operation::Paint(plane.layer_index, index.to_owned()));
     };
     ops
 }
 
-pub fn draw_planes(pl: &PlaneList, cam: &Camera, style_list: &StyleList, width: f64) -> OpList {
+pub fn draw_planes(pl: &PlaneList, cam: &Camera, width: f64) -> OpList {
     let dist = na::distance(&cam.eye, &cam.target).abs();
     let scale = dist / 2.0;
 

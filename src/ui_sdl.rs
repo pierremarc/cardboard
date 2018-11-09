@@ -11,7 +11,7 @@ use lingua::PlaneList;
 use operation::{OpList, Operation};
 use sdl2::event::Event;
 use sdl2::render::Texture;
-use style::StyleList;
+use style::{StyleCollection, StyleGetter};
 use surface_data::create_for_data_unsafe;
 use time::PreciseTime;
 
@@ -95,7 +95,7 @@ impl UiSdl {
         }
     }
 
-    pub fn run(&mut self, planes: &PlaneList, style: &StyleList, initial_camera: Camera) {
+    pub fn run(&mut self, planes: &PlaneList, style: &StyleCollection, initial_camera: Camera) {
         let sdl = sdl2::init().unwrap();
         let video_subsystem = sdl.video().unwrap();
         let mut event_pump = sdl.event_pump().unwrap();
@@ -119,7 +119,7 @@ impl UiSdl {
             ).unwrap();
 
         match self.paint(
-            &draw_planes(planes, &camera, &style, f64::from(self.width)),
+            &draw_planes(planes, &camera, f64::from(self.width)),
             &mut sdl_texture,
             style,
         ) {
@@ -145,7 +145,7 @@ impl UiSdl {
                         self.capture.map(timestamp, camera);
                         let start_paint = PreciseTime::now();
                         self.paint(
-                            &draw_planes(planes, &camera, &style, f64::from(self.width)),
+                            &draw_planes(planes, &camera, f64::from(self.width)),
                             &mut sdl_texture,
                             style,
                         ).and_then(|_| {
@@ -179,7 +179,7 @@ impl UiSdl {
         &self,
         ops: &OpList,
         texture: &mut Texture,
-        style: &StyleList,
+        style: &StyleCollection,
     ) -> Result<usize, String> {
         let sdl_query = texture.query();
         let rect = sdl2::rect::Rect::new(0, 0, sdl_query.width, sdl_query.height);
@@ -204,7 +204,7 @@ impl UiSdl {
                 Operation::Close => context.close_path(),
                 Operation::Move(p) => context.move_to(p.x, p.y),
                 Operation::Line(p) => context.line_to(p.x, p.y),
-                Operation::Paint(i) => style.get_for(i).map_or((), |s| {
+                Operation::Paint(li, si) => style.get_for(li, si).map_or((), |s| {
                     s.fillColor.map(|color| {
                         context.set_source_rgba(color.red, color.green, color.blue, color.alpha);
                         context.fill_preserve();

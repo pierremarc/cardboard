@@ -48,6 +48,17 @@ pub struct Style {
 pub struct StyleList(Vec<Style>, Option<Vec<usize>>);
 pub type StyleCollection = Vec<StyleList>;
 
+pub trait StyleGetter {
+    fn get_for(&self, list_index: &usize, style_index: &usize) -> Option<&Style>;
+}
+
+impl StyleGetter for StyleCollection {
+    fn get_for(&self, list_index: &usize, style_index: &usize) -> Option<&Style> {
+        self.get(list_index.to_owned())
+            .and_then(|style_list| style_list.get_for(style_index))
+    }
+}
+
 fn u2f(v: u8) -> f64 {
     let vf = v as f64;
     vf / 255.0
@@ -167,19 +178,9 @@ impl StyleList {
     pub fn get_for(&self, index: &usize) -> Option<&Style> {
         let styles = &self.0;
         match self.1 {
-            Some(ref apply_list) => {
-                apply_list
-                    .get(index.to_owned())
-                    .and_then(|style_index| styles.get(style_index.to_owned()))
-
-                // if index < apply_list.len() {
-                //     let i = apply_list[index];
-                //     let s = self.0[];
-                //     Some(s.clone())
-                // } else {
-                //     None
-                // }
-            }
+            Some(ref apply_list) => apply_list
+                .get(index.to_owned())
+                .and_then(|style_index| styles.get(style_index.to_owned())),
             _ => None,
         }
     }

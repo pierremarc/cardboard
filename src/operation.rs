@@ -5,7 +5,7 @@ pub enum Operation {
     Line(Point2D),
     Begin,
     Close,
-    Paint(usize),
+    Paint(usize, usize),
 }
 
 pub type OpList = Vec<Operation>;

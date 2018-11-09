@@ -11,34 +11,43 @@ pub fn load_geojson(filename: &str) -> Result<GeoJson, Error> {
     contents.parse::<GeoJson>()
 }
 
-struct Data {
-    planes: PlaneList,
-    styles: StyleCollection,
+pub struct Data {
+    pub planes: PlaneList,
+    pub styles: StyleCollection,
 }
 
-pub fn load_layers(filename: &str) -> std::io::Result<Data> {
-    let records = std::fs::read_to_string(filename)?;
-    let planes: Vec<PlaneList> = Vec::new();
-    let styles: StyleCollection = Vec::new();
+impl Data {
+    pub fn from_file(filename: &str) -> std::io::Result<Data> {
+        let records = std::fs::read_to_string(filename)?;
+        let mut planes: PlaneList = Vec::new();
+        let mut styles: StyleCollection = Vec::new();
 
-    records.lines().enumerate().for_each(|(index, r)| {
-        let file_names: Vec<&str> = r.split(":").collect();
-        file_names.pop().and_then(|data_fn| {
-            let gj = load_geojson(data_fn).unwrap();
-            let mut pl = get_planes(&gj, index);
-            let props = get_properties(&gj);
-            file_names.pop().and_then(|style_fn| {
-                let sj = load_style(style_fn).unwrap();
-                let mut style = StyleList::from_config(&sj);
-                style.apply(&props);
+        records.lines().enumerate().for_each(|(index, r)| {
+            let mut file_names: Vec<&str> = r.split(":").collect();
 
-                planes.append(&mut pl);
-                styles.push(style);
+            match file_names.pop() {
+                Some(data_fn) => {
+                    println!("load_geojson {}", data_fn);
+                    let gj = load_geojson(data_fn).unwrap();
+                    let mut pl = get_planes(&gj, index);
+                    let props = get_properties(&gj);
+                    match file_names.pop() {
+                        Some(style_fn) => {
+                            println!("load_style {}", style_fn);
+                            let sj = load_style(style_fn).unwrap();
+                            let mut style = StyleList::from_config(&sj);
+                            style.apply(&props);
 
-                None
-            })
+                            planes.append(&mut pl);
+                            styles.push(style);
+                        }
+                        None => (),
+                    }
+                }
+                None => (),
+            }
         });
-    });
 
-    Ok(Data { planes, styles })
+        Ok(Data { planes, styles })
+    }
 }

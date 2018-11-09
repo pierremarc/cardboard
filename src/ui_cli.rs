@@ -3,8 +3,7 @@ use camera::Camera;
 use draw::draw_planes;
 use lingua::PlaneList;
 use operation::{OpList, Operation};
-use std::fs::File;
-use style::StyleList;
+use style::{StyleCollection, StyleGetter};
 
 pub enum CliMode {
     Replay,
@@ -29,7 +28,7 @@ impl UiCli {
     pub fn run(
         &self,
         planes: &PlaneList,
-        style: &StyleList,
+        style: &StyleCollection,
         camera: Option<Camera>,
         target_path: &str,
     ) {
@@ -42,26 +41,32 @@ impl UiCli {
         }
     }
 
-    fn run_replay(&self, planes: &PlaneList, style: &StyleList, target_path: &str) {}
+    fn run_replay(&self, planes: &PlaneList, style: &StyleCollection, target_path: &str) {}
 
-    fn run_print(&self, planes: &PlaneList, style: &StyleList, camera: Camera, target_path: &str) {
+    fn run_print(
+        &self,
+        planes: &PlaneList,
+        style: &StyleCollection,
+        camera: Camera,
+        target_path: &str,
+    ) {
         let surface =
             PDFSurface::create(target_path, f64::from(self.width), f64::from(self.height));
         let context = Context::new(&surface);
         self.paint(
-            &draw_planes(planes, &camera, &style, f64::from(self.width)),
+            &draw_planes(planes, &camera, f64::from(self.width)),
             style,
             &context,
         );
     }
 
-    fn paint(&self, ops: &OpList, style: &StyleList, context: &Context) {
+    fn paint(&self, ops: &OpList, style: &StyleCollection, context: &Context) {
         ops.iter().for_each(|op| match op {
             Operation::Begin => context.new_path(),
             Operation::Close => context.close_path(),
             Operation::Move(p) => context.move_to(p.x, p.y),
             Operation::Line(p) => context.line_to(p.x, p.y),
-            Operation::Paint(i) => style.get_for(i).map_or((), |s| {
+            Operation::Paint(li, si) => style.get_for(li, si).map_or((), |s| {
                 s.fillColor.map(|color| {
                     context.set_source_rgba(color.red, color.green, color.blue, color.alpha);
                     context.fill_preserve();

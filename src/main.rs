@@ -30,31 +30,24 @@ mod ui_sdl;
 
 use bbox::BBox;
 use camera::Camera;
-use data::load_geojson;
-use lingua::get_planes;
-use lingua::get_properties;
+use data::Data;
 use lingua::Point;
 use std::env;
-use style::{load_style, StyleList};
+use std::process;
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
-
+fn run(args: Vec<String>) {
     let command = &args[1];
+    let layers = match Data::from_file(&args[2]) {
+        Ok(data) => data,
+        Err(e) => {
+            println!("{:?}", e);
+            process::exit(1)
+        }
+    };
 
-    let data_fn = &args[2];
-    let style_fn = &args[3];
+    println!("N {}", layers.planes.len());
 
-    let gj = load_geojson(data_fn).unwrap();
-    let pl = get_planes(&gj);
-    let props = get_properties(&gj);
-    let sj = load_style(style_fn).unwrap();
-    let mut style = StyleList::from_config(&sj);
-    style.apply(&props);
-
-    println!("N {}", pl.len());
-
-    let bbox = BBox::from_planes(&pl);
+    let bbox = BBox::from_planes(&layers.planes);
     let center = bbox.center();
     let initial_camera = Camera {
         eye: bbox.top_left_near(),
@@ -63,7 +56,7 @@ fn main() {
 
     if "view" == command {
         let mut ui = ui_sdl::UiSdl::new(600, 600);
-        ui.run(&pl, &style, initial_camera);
+        ui.run(&layers.planes, &layers.styles, initial_camera);
     } else if "print" == command {
         let width = args[4].parse::<u32>().unwrap_or(595);
         let height = args[5].parse::<u32>().unwrap_or(841);
@@ -81,8 +74,8 @@ fn main() {
         );
         let ui = ui_cli::UiCli::new(width, height, ui_cli::CliMode::Print);
         ui.run(
-            &pl,
-            &style,
+            &layers.planes,
+            &layers.styles,
             Some(Camera::new(
                 Point::new(eye_x, eye_y, eye_z),
                 Point::new(target_x, target_y, target_z),
@@ -90,4 +83,9 @@ fn main() {
             output,
         );
     }
+}
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+    run(args);
 }
