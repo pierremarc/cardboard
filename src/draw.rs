@@ -4,8 +4,7 @@ use lingua::PlaneList;
 use lingua::Point;
 use nalgebra as na;
 use nalgebra::distance_squared;
-use operation::OpList;
-use operation::Operation;
+use operation::{OpList, Operation};
 use ordered_float::OrderedFloat;
 use rayon::prelude::*;
 use std::cmp;
@@ -13,48 +12,48 @@ use time::PreciseTime;
 
 struct Dist(OrderedFloat<f64>, usize);
 
-fn sort_planes(p: Point, pl: &PlaneList) -> Vec<usize> {
-    let mut indices: Vec<usize> = Vec::with_capacity(pl.len());
+// fn sort_planes(p: Point, pl: &PlaneList) -> Vec<usize> {
+//     let mut indices: Vec<usize> = Vec::with_capacity(pl.len());
 
-    let mut start = PreciseTime::now();
-    for i in 0..pl.len() {
-        indices.push(i);
-    }
+//     let mut start = PreciseTime::now();
+//     for i in 0..pl.len() {
+//         indices.push(i);
+//     }
 
-    let distances: Vec<Dist> = indices
-        .par_iter()
-        .map(|i| {
-            let plane = &pl[i.to_owned()];
-            let d = plane.points.iter().fold(OrderedFloat(0.0), |acc, v| {
-                cmp::max(OrderedFloat(distance_squared(&p, v)), acc)
-            });
-            Dist(d, plane.layer_index)
-        }).collect();
+//     let distances: Vec<Dist> = indices
+//         .par_iter()
+//         .map(|i| {
+//             let plane = &pl[i.to_owned()];
+//             let d = plane.points.iter().fold(OrderedFloat(0.0), |acc, v| {
+//                 cmp::max(OrderedFloat(distance_squared(&p, v)), acc)
+//             });
+//             Dist(d, plane.layer_index)
+//         }).collect();
 
-    println!("Distances in {}", start.to(PreciseTime::now()));
-    start = PreciseTime::now();
-    indices.par_sort_unstable_by(|a, b| {
-        let da = &distances[a.to_owned()];
-        let db = &distances[b.to_owned()];
+//     println!("Distances in {}", start.to(PreciseTime::now()));
+//     start = PreciseTime::now();
+//     indices.par_sort_unstable_by(|a, b| {
+//         let da = &distances[a.to_owned()];
+//         let db = &distances[b.to_owned()];
 
-        if da.0 < db.0 {
-            cmp::Ordering::Greater
-        } else if da.0 > db.0 {
-            cmp::Ordering::Less
-        } else {
-            if da.1 < db.1 {
-                cmp::Ordering::Greater
-            } else if da.1 > db.1 {
-                cmp::Ordering::Less
-            } else {
-                cmp::Ordering::Equal
-            }
-        }
-    });
+//         if da.0 < db.0 {
+//             cmp::Ordering::Greater
+//         } else if da.0 > db.0 {
+//             cmp::Ordering::Less
+//         } else {
+//             if da.1 < db.1 {
+//                 cmp::Ordering::Greater
+//             } else if da.1 > db.1 {
+//                 cmp::Ordering::Less
+//             } else {
+//                 cmp::Ordering::Equal
+//             }
+//         }
+//     });
 
-    println!("Sort in {}", start.to(PreciseTime::now()));
-    indices
-}
+//     println!("Sort in {}", start.to(PreciseTime::now()));
+//     indices
+// }
 
 // pub type PlanePainter = Fn(usize) -> Vec<Operation>;
 // pub type FlattenedOps = Flatten<Map<std::slice::Iter<'_, usize>>>;
@@ -95,13 +94,98 @@ fn draw_index(
     ops
 }
 
-pub fn draw_planes(pl: &PlaneList, cam: &Camera, width: f64) -> OpList {
+pub struct DrawConfig {
+    indices: Vec<usize>,
+    view: na::Matrix4<f64>,
+    view_projection: na::Matrix4<f64>,
+    corrective: na::Matrix3<f64>,
+    clip_z: f64,
+    scale: f64,
+    tr: na::Matrix3<f64>,
+}
+
+pub trait Drawable {
+    fn sorted_indices(&self, p: Point) -> Vec<usize>;
+
+    fn draw<F>(&self, config: &DrawConfig, f: F)
+    where
+        F: FnMut(&Operation);
+}
+
+impl Drawable for PlaneList {
+    fn sorted_indices(&self, p: Point) -> Vec<usize> {
+        let mut indices: Vec<usize> = Vec::with_capacity(self.len());
+
+        let mut start = PreciseTime::now();
+        for i in 0..self.len() {
+            indices.push(i);
+        }
+
+        let distances: Vec<Dist> = indices
+            .par_iter()
+            .map(|i| {
+                let plane = &self[i.to_owned()];
+                let d = plane.points.iter().fold(OrderedFloat(0.0), |acc, v| {
+                    cmp::max(OrderedFloat(distance_squared(&p, v)), acc)
+                });
+                Dist(d, plane.layer_index)
+            }).collect();
+
+        println!("Distances in {}", start.to(PreciseTime::now()));
+        start = PreciseTime::now();
+        indices.par_sort_unstable_by(|a, b| {
+            let da = &distances[a.to_owned()];
+            let db = &distances[b.to_owned()];
+
+            if da.0 < db.0 {
+                cmp::Ordering::Greater
+            } else if da.0 > db.0 {
+                cmp::Ordering::Less
+            } else {
+                if da.1 < db.1 {
+                    cmp::Ordering::Greater
+                } else if da.1 > db.1 {
+                    cmp::Ordering::Less
+                } else {
+                    cmp::Ordering::Equal
+                }
+            }
+        });
+
+        println!("Sort in {}", start.to(PreciseTime::now()));
+        indices
+    }
+
+    fn draw<F>(&self, config: &DrawConfig, f: F)
+    where
+        F: FnMut(&Operation),
+    {
+        let ops: OpList = config
+            .indices
+            .par_iter()
+            .map(|index| {
+                draw_index(
+                    index.to_owned(),
+                    self,
+                    &config.view,
+                    &config.view_projection,
+                    &config.corrective,
+                    config.clip_z,
+                    config.scale,
+                    &config.tr,
+                )
+            }).flatten()
+            .collect();
+
+        ops.iter().for_each(f);
+    }
+}
+
+pub fn get_draw_config(pl: &PlaneList, cam: &Camera, width: f64) -> DrawConfig {
     let dist = na::distance(&cam.eye, &cam.target).abs();
     let scale = dist / 2.0;
 
     let target_ref = Point::new(cam.target.x, cam.target.y, cam.target.z + 10.0);
-
-    let indices = sort_planes(cam.eye, pl);
 
     let view = na::geometry::Isometry3::look_at_rh(&cam.eye, &cam.target, &na::Vector3::z())
         .to_homogeneous();
@@ -137,19 +221,13 @@ pub fn draw_planes(pl: &PlaneList, cam: &Camera, width: f64) -> OpList {
 
     let clip_z = view.transform_point(&cam.eye).z;
 
-    indices
-        .iter()
-        .map(|index| {
-            draw_index(
-                index.to_owned(),
-                pl,
-                &view,
-                &view_projection,
-                &corrective,
-                clip_z,
-                translation,
-                &tr,
-            )
-        }).flatten()
-        .collect()
+    DrawConfig {
+        indices: pl.sorted_indices(cam.eye),
+        view,
+        view_projection,
+        corrective,
+        clip_z,
+        scale: translation,
+        tr,
+    }
 }

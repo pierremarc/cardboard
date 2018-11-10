@@ -1,8 +1,8 @@
 use cairo::{Context, PDFSurface};
 use camera::Camera;
-use draw::draw_planes;
+use draw::{get_draw_config, DrawConfig, Drawable};
 use lingua::PlaneList;
-use operation::{OpList, Operation};
+use operation::paint_op;
 use style::{StyleCollection, StyleGetter};
 
 pub enum CliMode {
@@ -54,30 +54,20 @@ impl UiCli {
             PDFSurface::create(target_path, f64::from(self.width), f64::from(self.height));
         let context = Context::new(&surface);
         self.paint(
-            &draw_planes(planes, &camera, f64::from(self.width)),
+            planes,
+            &get_draw_config(planes, &camera, f64::from(self.width)),
             style,
             &context,
         );
     }
 
-    fn paint(&self, ops: &OpList, style: &StyleCollection, context: &Context) {
-        ops.iter().for_each(|op| match op {
-            Operation::Begin => context.new_path(),
-            Operation::Close => context.close_path(),
-            Operation::Move(p) => context.move_to(p.x, p.y),
-            Operation::Line(p) => context.line_to(p.x, p.y),
-            Operation::Paint(li, si) => style.get_for(li, si).map_or((), |s| {
-                s.fillColor.map(|color| {
-                    context.set_source_rgba(color.red, color.green, color.blue, color.alpha);
-                    context.fill_preserve();
-                });
-
-                s.strokeColor.map(|color| {
-                    context.set_line_width(s.strokeWidth);
-                    context.set_source_rgba(color.red, color.green, color.blue, color.alpha);
-                    context.stroke();
-                });
-            }),
-        });
+    fn paint(
+        &self,
+        pl: &PlaneList,
+        config: &DrawConfig,
+        style: &StyleCollection,
+        context: &Context,
+    ) {
+        pl.draw(config, |op| paint_op(&op, style, context));
     }
 }

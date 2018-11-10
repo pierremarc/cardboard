@@ -58,15 +58,15 @@ fn run(args: Vec<String>) {
         let mut ui = ui_sdl::UiSdl::new(600, 600);
         ui.run(&layers.planes, &layers.styles, initial_camera);
     } else if "print" == command {
-        let width = args[4].parse::<u32>().unwrap_or(595);
-        let height = args[5].parse::<u32>().unwrap_or(841);
-        let eye_x = args[6].parse::<f64>().unwrap_or(initial_camera.eye.x);
-        let eye_y = args[7].parse::<f64>().unwrap_or(initial_camera.eye.y);
-        let eye_z = args[8].parse::<f64>().unwrap_or(initial_camera.eye.z);
-        let target_x = args[9].parse::<f64>().unwrap_or(initial_camera.target.x);
-        let target_y = args[10].parse::<f64>().unwrap_or(initial_camera.target.y);
-        let target_z = args[11].parse::<f64>().unwrap_or(initial_camera.target.z);
-        let output = &args[12];
+        let width = args[3].parse::<u32>().unwrap_or(595);
+        let height = args[4].parse::<u32>().unwrap_or(841);
+        let eye_x = args[5].parse::<f64>().unwrap_or(initial_camera.eye.x);
+        let eye_y = args[6].parse::<f64>().unwrap_or(initial_camera.eye.y);
+        let eye_z = args[7].parse::<f64>().unwrap_or(initial_camera.eye.z);
+        let target_x = args[8].parse::<f64>().unwrap_or(initial_camera.target.x);
+        let target_y = args[9].parse::<f64>().unwrap_or(initial_camera.target.y);
+        let target_z = args[10].parse::<f64>().unwrap_or(initial_camera.target.z);
+        let output = &args[11];
 
         println!(
             "camera {} {} {} {} {} {}",

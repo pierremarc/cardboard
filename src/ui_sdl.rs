@@ -1,13 +1,15 @@
 use cairo::Context;
 use camera::Camera;
 use capture::Capture;
-use draw::draw_planes;
+use draw::get_draw_config;
+use draw::{DrawConfig, Drawable};
 use handlers::handle_key_event;
 use handlers::handle_key_event_pre;
 use handlers::handle_motion_event;
 use handlers::handle_wheel_event;
 use handlers::PreAction;
 use lingua::PlaneList;
+use operation::paint_op;
 use operation::{OpList, Operation};
 use sdl2::event::Event;
 use sdl2::render::Texture;
@@ -119,11 +121,12 @@ impl UiSdl {
             ).unwrap();
 
         match self.paint(
-            &draw_planes(planes, &camera, f64::from(self.width)),
+            planes,
+            &get_draw_config(planes, &camera, f64::from(self.width)),
             &mut sdl_texture,
             style,
         ) {
-            Ok(s) => println!("draw success {}", s),
+            Ok(s) => println!("First draw success"),
             Err(e) => println!("draw failure {}", e),
         };
         match canvas.copy(&sdl_texture, None, None) {
@@ -145,27 +148,14 @@ impl UiSdl {
                         self.capture.map(timestamp, camera);
                         let start_paint = PreciseTime::now();
                         self.paint(
-                            &draw_planes(planes, &camera, f64::from(self.width)),
+                            planes,
+                            &get_draw_config(planes, &camera, f64::from(self.width)),
                             &mut sdl_texture,
                             style,
                         ).and_then(|_| {
                             println!("Painted in {}", start_paint.to(PreciseTime::now()));
                             canvas.copy(&sdl_texture, None, None)
                         }).map(|_| canvas.present());
-
-                        // {
-                        //     Ok(s) => println!("draw success {}", s),
-                        //     Err(e) => println!("draw failure {}", e),
-                        // };
-                        // match canvas.copy(&sdl_texture, None, None) {
-                        //     Ok(r) => {
-                        //         println!("canvas copied {:?}", r);
-                        //         canvas.present();
-                        //     }
-                        //     Err(e) => {
-                        //         println!("canvas.copy error {}", e);
-                        //     }
-                        // };
                     }
                     PostEventAction::Idle => (),
                 }
@@ -177,13 +167,13 @@ impl UiSdl {
 
     fn paint(
         &self,
-        ops: &OpList,
+        pl: &PlaneList,
+        config: &DrawConfig,
         texture: &mut Texture,
         style: &StyleCollection,
-    ) -> Result<usize, String> {
+    ) -> Result<(), String> {
         let sdl_query = texture.query();
         let rect = sdl2::rect::Rect::new(0, 0, sdl_query.width, sdl_query.height);
-        println!("paint {} {}", sdl_query.width, sdl_query.height);
 
         texture.with_lock(Some(rect), |sdl_data, stride| {
             let surface = create_for_data_unsafe(
@@ -199,25 +189,7 @@ impl UiSdl {
             context.set_source_rgb(1.0, 1.0, 1.0);
             context.paint();
 
-            ops.iter().for_each(|op| match op {
-                Operation::Begin => context.new_path(),
-                Operation::Close => context.close_path(),
-                Operation::Move(p) => context.move_to(p.x, p.y),
-                Operation::Line(p) => context.line_to(p.x, p.y),
-                Operation::Paint(li, si) => style.get_for(li, si).map_or((), |s| {
-                    s.fillColor.map(|color| {
-                        context.set_source_rgba(color.red, color.green, color.blue, color.alpha);
-                        context.fill_preserve();
-                    });
-
-                    s.strokeColor.map(|color| {
-                        context.set_line_width(s.strokeWidth);
-                        context.set_source_rgba(color.red, color.green, color.blue, color.alpha);
-                        context.stroke();
-                    });
-                }),
-            });
-            ops.len()
+            pl.draw(config, |op| paint_op(&op, style, &context));
         })
     }
 }
