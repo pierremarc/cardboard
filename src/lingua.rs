@@ -3,6 +3,7 @@ use nalgebra::geometry::{Point2, Point3};
 use serde::de::{self, Deserialize, Deserializer, SeqAccess, Visitor};
 use serde_json;
 use std::iter::Flatten;
+use std::iter::FromIterator;
 use std::slice::Iter;
 
 pub type Properties = std::option::Option<serde_json::Map<std::string::String, serde_json::Value>>;
@@ -10,47 +11,112 @@ pub type Properties = std::option::Option<serde_json::Map<std::string::String, s
 pub type Point = Point3<f64>;
 pub type Point2D = Point2<f64>;
 
+#[derive(Clone)]
 pub struct PlaneT {
     pub layer_index: usize,
     pub style_index: usize,
     pub points: Vec<Point>,
 }
 
-pub enum Plane {
-    None,
-    One(PlaneT),
-    Multi(Vec<PlaneT>),
+// pub enum Plane {
+//     None,
+//     One(PlaneT),
+//     Multi(Vec<PlaneT>),
+// }
+
+// static empty_plane: Vec<PlaneT> = Vec::new();
+
+// impl Plane {
+//     pub fn iter(&self) -> Iter<PlaneT> {
+//         match self {
+//             Plane::None => empty_plane.iter(),
+//             Plane::One(plane) => vec![*plane].iter(),
+//             Plane::Multi(planes) => planes.iter(),
+//         }
+//     }
+
+//     // pub fn flatten(&self) -> Flatten<Iter<PlaneT>> {
+//     //     self.iter().flatten()
+//     // }
+// }
+
+// pub trait PlaneListIter {
+//     fn iter_planes<I>(&self) -> I
+//     where
+//         I: Iterator<Item = PlaneT>;
+// }
+const empty_plane: &'static [&'static PlaneT] = &[];
+
+pub type Plane = Vec<PlaneT>;
+pub struct PlaneList(Vec<Plane>);
+pub type PlaneFlat<'a> = Vec<&'a PlaneT>;
+
+pub struct PlaneIter<'a> {
+    outer: Iter<'a, Plane>,
+    inner: Iter<'a, PlaneT>,
 }
 
-impl Plane {
-    pub fn iter(&self) -> Iter<PlaneT> {
-        match *self {
-            Plane::None => Vec::new().iter(),
-            Plane::One(plane) => vec![plane].iter(),
-            Plane::Multi(planes) => planes.iter(),
-        }
+impl PlaneList {
+    pub fn new() -> PlaneList {
+        PlaneList(Vec::new())
     }
 
-    // pub fn flatten(&self) -> Flatten<Iter<PlaneT>> {
-    //     self.iter().flatten()
+    pub fn flattened(&self) -> PlaneFlat {
+        let mut pf: PlaneFlat = Vec::new();
+        let planes = &self.0;
+        for plane in planes {
+            for t in plane {
+                pf.push(&t)
+            }
+        }
+        pf
+        // self.iter().map(|p| &p).collect()
+    }
+
+    pub fn one(&self) -> &Vec<Plane> {
+        &self.0
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn push(&mut self, p: Plane) {
+        self.0.push(p)
+    }
+
+    pub fn merge(&mut self, other: &mut PlaneList) {
+        self.0.append(&mut other.0)
+    }
+
+    // pub fn iter(&self) -> PlaneIter {
+    //     let inner = self
+    //         .0
+    //         .iter()
+    //         .next()
+    //         .map_or(empty_plane.iter(), |p| p.iter());
+
+    //     let outer = (&self.0).iter();
+
+    //     PlaneIter { outer, inner }
     // }
 }
 
-pub trait PlaneListIter {
-    fn iter_planes<I>(&self) -> I
-    where
-        I: Iterator<Item = PlaneT>;
-}
-pub type PlaneList = Vec<Plane>;
-
-impl PlaneListIter for PlaneList {
-    fn iter_planes<I>(&self) -> I
-    where
-        I: Iterator<Item = PlaneT>,
-    {
-        self.iter().map(|p| p.iter()).flatten()
-    }
-}
+// impl<'a> Iterator for PlaneIter<'a> {
+//     type Item = &'a PlaneT;
+//     fn next(&mut self) -> Option<Self::Item> {
+//         match self.inner.next() {
+//             Some(i) => Some(*i),
+//             None => match self.outer.next() {
+//                 None => None,
+//                 Some(o) => {
+//                     self.inner = o.iter();
+//                     self.next()
+//                 }
+//             },
+//         }
+//     }
+// }
 
 pub type PropList = Vec<Properties>;
 
@@ -68,20 +134,19 @@ fn plane_from_polygon(poly: PolygonType, layer_index: usize, style_index: usize)
 
 fn plane_from_geometry(geom: Geometry, layer_index: usize, style_index: usize) -> Plane {
     match geom.value {
-        Value::Polygon(v) => Plane::One(plane_from_polygon(v, layer_index, style_index)),
-        Value::MultiPolygon(v) => Plane::Multi(
+        Value::Polygon(v) => vec![plane_from_polygon(v, layer_index, style_index)],
+        Value::MultiPolygon(v) => Plane::from_iter(
             v.iter()
-                .map(|poly| plane_from_polygon(poly.to_vec(), layer_index, style_index))
-                .collect(),
+                .map(|poly| plane_from_polygon(poly.to_vec(), layer_index, style_index)),
         ),
-        _ => Plane::None,
+        _ => Vec::new(),
     }
 }
 
 pub fn plane_from_feature(f: Feature, layer_index: usize, style_index: usize) -> Plane {
     match f.geometry {
         Some(geom) => plane_from_geometry(geom, layer_index, style_index),
-        None => Plane::None,
+        None => Vec::new(),
     }
 }
 

@@ -46,9 +46,11 @@ fn run(args: Vec<String>) {
         }
     };
 
-    println!("N {}", layers.planes.len());
+    let planes = layers.planes.flattened();
 
-    let bbox = BBox::from_planes(&layers.planes);
+    println!("N {}", planes.len());
+
+    let bbox = BBox::from_planes(&planes);
     let center = bbox.center();
     let initial_camera = Camera {
         eye: bbox.top_left_near(),
@@ -57,7 +59,7 @@ fn run(args: Vec<String>) {
 
     if "view" == command {
         let mut ui = ui_sdl::UiSdl::new(600, 600);
-        ui.run(&layers.planes, &layers.styles, initial_camera);
+        ui.run(&planes, &layers.styles, initial_camera);
     } else if "print" == command {
         let width = args[3].parse::<u32>().unwrap_or(595);
         let height = args[4].parse::<u32>().unwrap_or(841);
@@ -75,7 +77,7 @@ fn run(args: Vec<String>) {
         );
         let ui = ui_cli::UiCli::new(width, height, ui_cli::CliMode::Print);
         ui.run(
-            &layers.planes,
+            &planes,
             &layers.styles,
             Some(Camera::new(
                 Point::new(eye_x, eye_y, eye_z),

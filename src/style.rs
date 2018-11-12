@@ -233,24 +233,59 @@ impl StyleList {
     }
 
     pub fn select(&self, props_opt: Properties) -> Option<usize> {
-        let style_iterator = self.0.iter();
-        style_iterator.position(|s| match s.config {
-            StyleConfig::Simple => true,
+        let styles = &self.0;
+        let mut style_iterator = styles.iter();
+        // let props_opt_r = &props_opt;
+        let mut r = 0;
 
-            StyleConfig::Continuous(config) => props_opt.map_or(false, |props| {
-                props.get(&config.prop_name).map_or(false, |v| {
-                    v.as_f64()
-                        .map_or(false, |n| n >= config.low && n < config.high)
-                })
-            }),
+        for i in 0..styles.len() {
+            let s = &styles[i];
+            match &s.config {
+                StyleConfig::Simple => return Some(i),
 
-            StyleConfig::Discrete(config) => props_opt.map_or(false, |props| {
-                props.get(&config.prop_name).map_or(false, |v| {
-                    v.as_str()
-                        .map_or(false, |s| config.toks.iter().any(|t| t == s))
-                })
-            }),
-        })
+                StyleConfig::Continuous(config) => {
+                    if props_opt.clone().map_or(false, |props| {
+                        props.get(&config.prop_name).map_or(false, |v| {
+                            v.as_f64()
+                                .map_or(false, |n| n >= config.low && n < config.high)
+                        })
+                    }) {
+                        return Some(i);
+                    }
+                }
+
+                StyleConfig::Discrete(config) => {
+                    if props_opt.clone().map_or(false, |props| {
+                        props.get(&config.prop_name).map_or(false, |v| {
+                            v.as_str()
+                                .map_or(false, |s| config.toks.iter().any(|t| t == s))
+                        })
+                    }) {
+                        return Some(i);
+                    }
+                }
+            }
+        }
+
+        None
+
+        // style_iterator.position(|s| match &s.config {
+        //     StyleConfig::Simple => true,
+
+        //     StyleConfig::Continuous(config) => props_opt_r.map_or(false, |props| {
+        //         props.get(&config.prop_name).map_or(false, |v| {
+        //             v.as_f64()
+        //                 .map_or(false, |n| n >= config.low && n < config.high)
+        //         })
+        //     }),
+
+        //     StyleConfig::Discrete(config) => props_opt_r.map_or(false, |props| {
+        //         props.get(&config.prop_name).map_or(false, |v| {
+        //             v.as_str()
+        //                 .map_or(false, |s| config.toks.iter().any(|t| t == s))
+        //         })
+        //     }),
+        // })
     }
 
     pub fn apply(&mut self, props: &Vec<Properties>) -> &StyleList {

@@ -1,5 +1,5 @@
+use lingua::PlaneFlat;
 use lingua::Point;
-use lingua::{PlaneList, PlaneListIter};
 use ordered_float::OrderedFloat;
 use std::cmp;
 
@@ -13,7 +13,7 @@ pub struct BBox {
 }
 
 impl BBox {
-    pub fn from_planes(pl: &PlaneList) -> BBox {
+    pub fn from_planes(pl: &PlaneFlat) -> BBox {
         let mut minx = OrderedFloat(std::f64::MAX);
         let mut miny = OrderedFloat(std::f64::MAX);
         let mut minz = OrderedFloat(std::f64::MAX);
@@ -21,7 +21,7 @@ impl BBox {
         let mut maxy = OrderedFloat(std::f64::MIN);
         let mut maxz = OrderedFloat(std::f64::MIN);
 
-        pl.iter_planes().for_each(|plane| {
+        pl.iter().for_each(|plane| {
             plane.points.iter().for_each(|pt| {
                 minx = cmp::min(minx, OrderedFloat(pt.x));
                 miny = cmp::min(miny, OrderedFloat(pt.y));

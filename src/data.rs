@@ -6,6 +6,7 @@ use lingua::{Plane, PlaneList};
 use serde::de::{self, Deserialize, Deserializer, SeqAccess, Visitor};
 use serde_json::Deserializer as JsonDeserializer;
 
+use std::cell::{Ref, RefCell};
 use std::fs;
 use std::thread;
 use std::{cmp, fmt};
@@ -18,19 +19,19 @@ use style::{load_style, StyleCollection, StyleList};
 // }
 
 #[derive(Clone)]
-struct DeState {
-    style: StyleList,
-    layer_index: usize,
+pub struct DeState {
+    pub style: StyleList,
+    pub layer_index: usize,
 }
 
-#[derive(Clone)]
-enum State {
-    None,
-    S(DeState),
-}
+// #[derive(Clone)]
+// pub enum State {
+//     None,
+//     S(DeState),
+// }
 
 thread_local! {
-    pub static STATE: State = State::None;
+    pub static STATE: RefCell<Option<DeState>> = RefCell::new(None);
 }
 
 // struct FeatureVisitor {
@@ -171,15 +172,16 @@ where
         where
             S: SeqAccess<'de>,
         {
-            let mut planes: PlaneList = Vec::new();
+            let mut planes: PlaneList = PlaneList::new();
 
-            match STATE.with(|s| s.clone()) {
-                State::None => (),
-                State::S(s) => {
+            match STATE.with(|s| s.borrow().clone()) {
+                None => (),
+                Some(s) => {
                     while let Some(value) = seq.next_element()? {
                         match Feature::from_json_object(value) {
-                            Ok(f) => match s.style.select(f.properties) {
+                            Ok(f) => match s.style.select(f.properties.clone()) {
                                 Some(style_index) => {
+                                    println!("styled {} {}", s.layer_index, style_index);
                                     planes.push(plane_from_feature(f, s.layer_index, style_index));
                                 }
                                 None => (),
@@ -201,7 +203,7 @@ where
 impl Data {
     pub fn from_file(filename: &str) -> std::io::Result<Data> {
         let records = std::fs::read_to_string(filename)?;
-        let mut planes: PlaneList = Vec::new();
+        let mut planes: PlaneList = PlaneList::new();
         let mut styles: StyleCollection = Vec::new();
 
         records.lines().enumerate().for_each(|(index, r)| {
@@ -213,8 +215,8 @@ impl Data {
                     let style = StyleList::from_config(&sj);
 
                     STATE.with(|s| {
-                        *s = State::S(DeState {
-                            style,
+                        *s.borrow_mut() = Some(DeState {
+                            style: style.clone(),
                             layer_index: index,
                         })
                     });
@@ -223,8 +225,16 @@ impl Data {
                         Some(data_fn) => match ::std::fs::File::open(data_fn) {
                             Ok(f) => {
                                 println!("Loading data {}", data_fn);
-                                let deser = serde_json::Deserializer::from_reader(f);
-                                let fl = deser.into_iter().collect();
+                                // let deser = serde_json::Deserializer::from_reader(f);
+                                // let fl: FeatureList = deser.;
+                                let mut r: ::std::result::Result<FeatureList, ::serde_json::Error> = serde_json::from_reader(f);
+                                match r {
+                                    Ok(ref mut fl) => {
+                                        planes.merge(&mut fl.planes);
+                                        println!("Loaded");
+                                        },
+                                    Err(e)=> println!("Error {}", e),
+                                }
                             }
                             Err(e) => println!("Error {}", e),
                         },
@@ -235,16 +245,6 @@ impl Data {
                 }
                 None => (),
             }
-
-            // match file_names.pop() {
-            //     Some(data_fn) => {
-            //         println!("load_geojson {}", data_fn);
-            //         let gj = load_geojson(data_fn).unwrap();
-            //         let mut pl = get_planes(&gj, index);
-            //         let props = get_properties(&gj);
-            //     }
-            //     None => (),
-            // }
         });
 
         Ok(Data { planes, styles })

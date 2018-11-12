@@ -1,6 +1,6 @@
 use camera::Camera;
 use geom::transform2d;
-use lingua::PlaneList;
+use lingua::PlaneFlat;
 use lingua::Point;
 use nalgebra as na;
 use nalgebra::distance_squared;
@@ -12,7 +12,7 @@ use time::PreciseTime;
 
 struct Dist(OrderedFloat<f64>, usize);
 
-// fn sort_planes(p: Point, pl: &PlaneList) -> Vec<usize> {
+// fn sort_planes(p: Point, pl: &PlaneFlat) -> Vec<usize> {
 //     let mut indices: Vec<usize> = Vec::with_capacity(pl.len());
 
 //     let mut start = PreciseTime::now();
@@ -60,7 +60,7 @@ struct Dist(OrderedFloat<f64>, usize);
 
 fn draw_index(
     index: usize,
-    pl: &PlaneList,
+    pl: &PlaneFlat,
     view: &na::Matrix4<f64>,
     view_projection: &na::Matrix4<f64>,
     corrective: &na::Matrix3<f64>,
@@ -112,7 +112,7 @@ pub trait Drawable {
         F: FnMut(&Operation);
 }
 
-impl Drawable for PlaneList {
+impl<'a> Drawable for PlaneFlat<'a> {
     fn sorted_indices(&self, p: Point) -> Vec<usize> {
         let mut indices: Vec<usize> = Vec::with_capacity(self.len());
 
@@ -124,7 +124,7 @@ impl Drawable for PlaneList {
         let distances: Vec<Dist> = indices
             .par_iter()
             .map(|i| {
-                let plane = &self[i.to_owned()];
+                let plane = self[i.to_owned()];
                 let d = plane.points.iter().fold(OrderedFloat(0.0), |acc, v| {
                     cmp::max(OrderedFloat(distance_squared(&p, v)), acc)
                 });
@@ -181,7 +181,7 @@ impl Drawable for PlaneList {
     }
 }
 
-pub fn get_draw_config(pl: &PlaneList, cam: &Camera, width: f64) -> DrawConfig {
+pub fn get_draw_config(pl: &PlaneFlat, cam: &Camera, width: f64) -> DrawConfig {
     let dist = na::distance(&cam.eye, &cam.target).abs();
     let scale = dist / 2.0;
 

@@ -1,7 +1,7 @@
 use cairo::{Context, PDFSurface};
 use camera::Camera;
 use draw::{get_draw_config, DrawConfig, Drawable};
-use lingua::PlaneList;
+use lingua::PlaneFlat;
 use operation::paint_op;
 use style::{StyleCollection, StyleGetter};
 
@@ -27,7 +27,7 @@ impl UiCli {
 
     pub fn run(
         &self,
-        planes: &PlaneList,
+        planes: &PlaneFlat,
         style: &StyleCollection,
         camera: Option<Camera>,
         target_path: &str,
@@ -41,11 +41,11 @@ impl UiCli {
         }
     }
 
-    fn run_replay(&self, planes: &PlaneList, style: &StyleCollection, target_path: &str) {}
+    fn run_replay(&self, planes: &PlaneFlat, style: &StyleCollection, target_path: &str) {}
 
     fn run_print(
         &self,
-        planes: &PlaneList,
+        planes: &PlaneFlat,
         style: &StyleCollection,
         camera: Camera,
         target_path: &str,
@@ -63,7 +63,7 @@ impl UiCli {
 
     fn paint(
         &self,
-        pl: &PlaneList,
+        pl: &PlaneFlat,
         config: &DrawConfig,
         style: &StyleCollection,
         context: &Context,

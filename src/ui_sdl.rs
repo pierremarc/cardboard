@@ -8,7 +8,7 @@ use handlers::handle_key_event_pre;
 use handlers::handle_motion_event;
 use handlers::handle_wheel_event;
 use handlers::PreAction;
-use lingua::PlaneList;
+use lingua::PlaneFlat;
 use operation::paint_op;
 use operation::{OpList, Operation};
 use sdl2::event::Event;
@@ -97,7 +97,7 @@ impl UiSdl {
         }
     }
 
-    pub fn run(&mut self, planes: &PlaneList, style: &StyleCollection, initial_camera: Camera) {
+    pub fn run(&mut self, planes: &PlaneFlat, style: &StyleCollection, initial_camera: Camera) {
         let sdl = sdl2::init().unwrap();
         let video_subsystem = sdl.video().unwrap();
         let mut event_pump = sdl.event_pump().unwrap();
@@ -167,7 +167,7 @@ impl UiSdl {
 
     fn paint(
         &self,
-        pl: &PlaneList,
+        pl: &PlaneFlat,
         config: &DrawConfig,
         texture: &mut Texture,
         style: &StyleCollection,
