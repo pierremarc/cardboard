@@ -6,11 +6,12 @@ extern crate nalgebra;
 extern crate ordered_float;
 extern crate rayon;
 extern crate sdl2;
-extern crate serde;
 extern crate serde_json;
 extern crate svgtypes;
 extern crate time;
 
+#[macro_use]
+extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 

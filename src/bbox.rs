@@ -1,5 +1,5 @@
-use lingua::PlaneList;
 use lingua::Point;
+use lingua::{PlaneList, PlaneListIter};
 use ordered_float::OrderedFloat;
 use std::cmp;
 
@@ -21,7 +21,7 @@ impl BBox {
         let mut maxy = OrderedFloat(std::f64::MIN);
         let mut maxz = OrderedFloat(std::f64::MIN);
 
-        pl.iter().for_each(|plane| {
+        pl.iter_planes().for_each(|plane| {
             plane.points.iter().for_each(|pt| {
                 minx = cmp::min(minx, OrderedFloat(pt.x));
                 miny = cmp::min(miny, OrderedFloat(pt.y));

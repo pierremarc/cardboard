@@ -45,7 +45,9 @@ pub struct Style {
 //     Discrete,
 // }
 
+#[derive(Clone, Debug)]
 pub struct StyleList(Vec<Style>, Option<Vec<usize>>);
+
 pub type StyleCollection = Vec<StyleList>;
 
 pub trait StyleGetter {
@@ -228,6 +230,27 @@ impl StyleList {
         // make sure ther's a default style at the end
         sl.add(Style::default());
         sl
+    }
+
+    pub fn select(&self, props_opt: Properties) -> Option<usize> {
+        let style_iterator = self.0.iter();
+        style_iterator.position(|s| match s.config {
+            StyleConfig::Simple => true,
+
+            StyleConfig::Continuous(config) => props_opt.map_or(false, |props| {
+                props.get(&config.prop_name).map_or(false, |v| {
+                    v.as_f64()
+                        .map_or(false, |n| n >= config.low && n < config.high)
+                })
+            }),
+
+            StyleConfig::Discrete(config) => props_opt.map_or(false, |props| {
+                props.get(&config.prop_name).map_or(false, |v| {
+                    v.as_str()
+                        .map_or(false, |s| config.toks.iter().any(|t| t == s))
+                })
+            }),
+        })
     }
 
     pub fn apply(&mut self, props: &Vec<Properties>) -> &StyleList {

@@ -76,7 +76,7 @@ version = "0.1.0"
 dependencies = [
  "cairo-rs 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "cairo-sys-rs 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "geojson 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "geojson 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.43 (registry+https://github.com/rust-lang/crates.io-index)",
  "nalgebra 0.16.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "ordered-float 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -188,7 +188,7 @@ dependencies = [
 
 [[package]]
 name = "geojson"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "geo-types 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -638,7 +638,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum fuchsia-zircon-sys 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
 "checksum generic-array 0.11.1 (registry+https://github.com/rust-lang/crates.io-index)" = "8107dafa78c80c848b71b60133954b4a58609a3a1a5f9af037ecc7f67280f369"
 "checksum geo-types 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "7260ac8abfc04cc21b914254b69875c2548faf6f791f88ad9ec1a131d4251729"
-"checksum geojson 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)" = "fa4fb54bb359e2b2a473704f676c917769faf06f57ddc33ccaadc83d05ea936d"
+"checksum geojson 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)" = "ba15ed82ca7885866c6257f6d91f57aeab25ca3dcb7d93204a6d4aa02ecf83ae"
 "checksum glib 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)" = "740f7fda8dde5f5e3944dabdb4a73ac6094a8a7fdf0af377468e98ca93733e61"
 "checksum glib-sys 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)" = "3573351e846caed9f11207b275cd67bc07f0c2c94fb628e5d7c92ca056c7882d"
 "checksum gobject-sys 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)" = "08475e4a08f27e6e2287005950114735ed61cec2cb8c1187682a5aec8c69b715"
