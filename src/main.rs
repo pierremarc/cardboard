@@ -3,13 +3,13 @@ extern crate cairo_sys;
 extern crate geojson;
 extern crate libc;
 extern crate nalgebra;
+extern crate num_cpus;
 extern crate ordered_float;
 extern crate rayon;
 extern crate sdl2;
 extern crate serde_json;
 extern crate svgtypes;
 extern crate time;
-
 #[macro_use]
 extern crate serde;
 #[macro_use]
@@ -24,6 +24,7 @@ mod geom;
 mod handlers;
 mod lingua;
 mod operation;
+mod paro;
 mod style;
 mod surface_data;
 mod ui_cli;
