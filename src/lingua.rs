@@ -57,8 +57,8 @@ pub struct PlaneIter<'a> {
 }
 
 impl PlaneList {
-    pub fn new() -> PlaneList {
-        PlaneList(Vec::new())
+    pub fn new(capacity: usize) -> PlaneList {
+        PlaneList(Vec::with_capacity(capacity))
     }
 
     pub fn flattened(&self) -> PlaneFlat {

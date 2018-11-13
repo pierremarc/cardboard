@@ -46,7 +46,7 @@ pub struct Style {
 // }
 
 #[derive(Clone, Debug)]
-pub struct StyleList(Vec<Style>, Option<Vec<usize>>);
+pub struct StyleList(Vec<Style>);
 
 pub type StyleCollection = Vec<StyleList>;
 
@@ -169,7 +169,7 @@ impl Style {
 
 impl StyleList {
     pub fn new() -> StyleList {
-        StyleList(Vec::new(), None)
+        StyleList(Vec::new())
     }
 
     fn add(&mut self, s: Style) -> &mut StyleList {
@@ -179,12 +179,7 @@ impl StyleList {
 
     pub fn get_for(&self, index: &usize) -> Option<&Style> {
         let styles = &self.0;
-        match self.1 {
-            Some(ref apply_list) => apply_list
-                .get(index.to_owned())
-                .and_then(|style_index| styles.get(style_index.to_owned())),
-            _ => None,
-        }
+        styles.get(index.to_owned())
     }
 
     pub fn from_config(style_config: &PolygonStyleConfig) -> StyleList {
@@ -268,62 +263,6 @@ impl StyleList {
         }
 
         None
-
-        // style_iterator.position(|s| match &s.config {
-        //     StyleConfig::Simple => true,
-
-        //     StyleConfig::Continuous(config) => props_opt_r.map_or(false, |props| {
-        //         props.get(&config.prop_name).map_or(false, |v| {
-        //             v.as_f64()
-        //                 .map_or(false, |n| n >= config.low && n < config.high)
-        //         })
-        //     }),
-
-        //     StyleConfig::Discrete(config) => props_opt_r.map_or(false, |props| {
-        //         props.get(&config.prop_name).map_or(false, |v| {
-        //             v.as_str()
-        //                 .map_or(false, |s| config.toks.iter().any(|t| t == s))
-        //         })
-        //     }),
-        // })
-    }
-
-    pub fn apply(&mut self, props: &Vec<Properties>) -> &StyleList {
-        let apply_list: Vec<usize> = props
-            .iter()
-            .map(|properties| {
-                match self.0.iter().position(|s| match s.config.clone() {
-                    StyleConfig::Simple => true,
-
-                    StyleConfig::Continuous(config) => properties.clone().map_or(false, |props| {
-                        props.get(&config.prop_name).map_or(false, |v| {
-                            v.as_f64().map_or(false, |n| {
-                                // println!(
-                                //     // "StyleConfig::Continuous {} {} {} => {}",
-                                //     n,
-                                //     config.low,
-                                //     config.high,
-                                //     n >= config.low && n < config.high,
-                                // );
-                                n >= config.low && n < config.high
-                            })
-                        })
-                    }),
-
-                    StyleConfig::Discrete(config) => properties.clone().map_or(false, |props| {
-                        props.get(&config.prop_name).map_or(false, |v| {
-                            v.as_str()
-                                .map_or(false, |s| config.toks.iter().any(|t| t == s))
-                        })
-                    }),
-                }) {
-                    Some(i) => i.to_owned(),
-                    None => panic!("Could not find a style"),
-                }
-            }).collect();
-
-        self.1 = Some(apply_list);
-        self
     }
 }
 

@@ -11,12 +11,43 @@ use std::fs;
 use std::thread;
 use std::{cmp, fmt};
 use style::{load_style, StyleCollection, StyleList};
+use time::precise_time_s;
 
-// pub fn load_geojson(filename: &str) -> Result<GeoJson, Error> {
-//     let contents = fs::read_to_string(filename).expect("Something went wrong reading the file");
+pub struct Counter {
+    name: String,
+    count: usize,
+    pstep: usize,
+    p: usize,
+    t: f64,
+}
 
-//     contents.parse::<GeoJson>()
-// }
+impl Counter {
+    pub fn new(name: &str, pstep: usize) -> Counter {
+        Counter {
+            pstep,
+            name: name.to_owned(),
+            count: 0,
+            p: pstep,
+            t: precise_time_s(),
+        }
+    }
+
+    pub fn inc(&mut self) {
+        self.count += 1;
+        if self.count == self.p {
+            self.p += self.pstep;
+            let d = precise_time_s() - self.t;
+            println!(
+                "Count({}) -> {} {} {}",
+                self.name,
+                self.count,
+                d,
+                d / (self.pstep as f64)
+            );
+            self.t = precise_time_s();
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct DeState {
@@ -24,129 +55,14 @@ pub struct DeState {
     pub layer_index: usize,
 }
 
-// #[derive(Clone)]
-// pub enum State {
-//     None,
-//     S(DeState),
-// }
-
 thread_local! {
     pub static STATE: RefCell<Option<DeState>> = RefCell::new(None);
-}
-
-// struct FeatureVisitor {
-//     style: StyleList,
-// }
-
-// impl<'de> Visitor<'de> for FeatureVisitor {
-//     type Value = Plane;
-
-//     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-//         formatter.write_str("a geojson feature")
-//     }
-
-//     #[inline]
-//     fn visit_unit<E>(self) -> Result<Self::Value, E>
-//     where
-//         E: de::Error,
-//     {
-//         Ok(Plane::None)
-//     }
-
-//     #[inline]
-//     fn visit_map<V>(self, mut visitor: V) -> Result<Self::Value, V::Error>
-//     where
-//         V: de::MapAccess<'de>,
-//     {
-//         let mut values = ::serde_json::map::Map::new();
-
-//         while let Some((key, value)) = try!(visitor.next_entry()) {
-//             values.insert(key, value);
-//         }
-
-//         match Feature::from_json_object(values) {
-//             Ok(f) => match self.style.select(f.properties) {
-//                 Some(style_index) => Ok(plane_from_feature2(f, 0, style_index)),
-//                 None => Ok(Plane::None),
-//             },
-//             Err(_) => Ok(Plane::None),
-//         }
-//     }
-// }
-
-trait Styled {
-    fn get_style_list(&self) -> StyleList;
 }
 
 pub struct Data {
     pub styles: StyleCollection,
     pub planes: PlaneList,
 }
-
-// pub struct DataDeserializer<R>
-// where
-//     R: std::io::Read,
-// {
-//     deser: JsonDeserializer<::serde_json::de::IoRead<R>>,
-//     pub style: StyleList,
-//     pub current_layer_index: usize,
-// }
-
-// impl<'de, R> DataDeserializer<R>
-// where
-//     R: ::std::io::Read,
-// {
-//     pub fn new(style: StyleList, current_layer_index: usize, r: R) -> Self {
-//         DataDeserializer {
-//             deser: JsonDeserializer::from_reader(r),
-//             style,
-//             current_layer_index,
-//         }
-//     }
-
-//     fn deserialize_feature(
-//         self,
-//         visitor: FeatureVisitor,
-//     ) -> Result<Plane, ::serde_json::error::Error> {
-//         visitor.visit_feature(serde_json::map::MapAccess::new(self), self.style)
-//     }
-// }
-
-// impl<'de, R> Deserializer<'de> for DataDeserializer<R>
-// where
-//     R: std::io::Read,
-// {
-//     type Error = ::serde_json::error::Error;
-
-//     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-//     where
-//         V: Visitor<'de>,
-//     {
-//         self.deser.deserialize_any(visitor)
-//     }
-
-//     fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-//     where
-//         V: Visitor<'de>,
-//     {
-//         self.deser.deserialize_map(visitor)
-//     }
-
-//     forward_to_deserialize_any! {
-//         bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
-//         bytes byte_buf option unit unit_struct newtype_struct seq tuple
-//         tuple_struct struct enum identifier ignored_any
-//     }
-// }
-
-// impl<'de, R> Styled for DataDeserializer<R>
-// where
-//     R: std::io::Read,
-// {
-//     fn get_style_list(&self) -> StyleList {
-//         self.style
-//     }
-// }
 
 #[derive(Deserialize)]
 struct FeatureList {
@@ -172,7 +88,8 @@ where
         where
             S: SeqAccess<'de>,
         {
-            let mut planes: PlaneList = PlaneList::new();
+            let mut c = Counter::new("visit", 1000);
+            let mut planes: PlaneList = PlaneList::new(1000000);
 
             match STATE.with(|s| s.borrow().clone()) {
                 None => (),
@@ -181,7 +98,8 @@ where
                         match Feature::from_json_object(value) {
                             Ok(f) => match s.style.select(f.properties.clone()) {
                                 Some(style_index) => {
-                                    println!("styled {} {}", s.layer_index, style_index);
+                                    // println!("styled {} {}", s.layer_index, style_index);
+                                    c.inc();
                                     planes.push(plane_from_feature(f, s.layer_index, style_index));
                                 }
                                 None => (),
@@ -203,7 +121,7 @@ where
 impl Data {
     pub fn from_file(filename: &str) -> std::io::Result<Data> {
         let records = std::fs::read_to_string(filename)?;
-        let mut planes: PlaneList = PlaneList::new();
+        let mut planes: PlaneList = PlaneList::new(0);
         let mut styles: StyleCollection = Vec::new();
 
         records.lines().enumerate().for_each(|(index, r)| {

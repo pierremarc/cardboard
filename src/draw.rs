@@ -89,7 +89,7 @@ fn draw_index(
             }
         });
         ops.push(Operation::Close);
-        ops.push(Operation::Paint(plane.layer_index, index.to_owned()));
+        ops.push(Operation::Paint(plane.layer_index, plane.style_index));
     };
     ops
 }
