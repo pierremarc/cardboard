@@ -96,7 +96,7 @@ where
                 Some(s) => {
                     while let Some(value) = seq.next_element()? {
                         match Feature::from_json_object(value) {
-                            Ok(f) => match s.style.select(f.properties.clone()) {
+                            Ok(ref f) => match s.style.select(&f.properties) {
                                 Some(style_index) => {
                                     // println!("styled {} {}", s.layer_index, style_index);
                                     c.inc();

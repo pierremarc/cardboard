@@ -227,11 +227,8 @@ impl StyleList {
         sl
     }
 
-    pub fn select(&self, props_opt: Properties) -> Option<usize> {
+    pub fn select(&self, props_opt: &Properties) -> Option<usize> {
         let styles = &self.0;
-        let mut style_iterator = styles.iter();
-        // let props_opt_r = &props_opt;
-        let mut r = 0;
 
         for i in 0..styles.len() {
             let s = &styles[i];
@@ -239,23 +236,27 @@ impl StyleList {
                 StyleConfig::Simple => return Some(i),
 
                 StyleConfig::Continuous(config) => {
-                    if props_opt.clone().map_or(false, |props| {
-                        props.get(&config.prop_name).map_or(false, |v| {
+                    let it = match props_opt {
+                        Some(ref props) => props.get(&config.prop_name).map_or(false, |v| {
                             v.as_f64()
                                 .map_or(false, |n| n >= config.low && n < config.high)
-                        })
-                    }) {
+                        }),
+                        None => false,
+                    };
+                    if it {
                         return Some(i);
                     }
                 }
 
                 StyleConfig::Discrete(config) => {
-                    if props_opt.clone().map_or(false, |props| {
-                        props.get(&config.prop_name).map_or(false, |v| {
+                    let it = match props_opt {
+                        Some(ref props) => props.get(&config.prop_name).map_or(false, |v| {
                             v.as_str()
                                 .map_or(false, |s| config.toks.iter().any(|t| t == s))
-                        })
-                    }) {
+                        }),
+                        None => false,
+                    };
+                    if it {
                         return Some(i);
                     }
                 }

@@ -120,7 +120,7 @@ impl PlaneList {
 
 pub type PropList = Vec<Properties>;
 
-fn plane_from_polygon(poly: PolygonType, layer_index: usize, style_index: usize) -> PlaneT {
+fn plane_from_polygon(poly: &PolygonType, layer_index: usize, style_index: usize) -> PlaneT {
     let exterior_ring = &poly[0];
     PlaneT {
         layer_index,
@@ -132,20 +132,20 @@ fn plane_from_polygon(poly: PolygonType, layer_index: usize, style_index: usize)
     }
 }
 
-fn plane_from_geometry(geom: Geometry, layer_index: usize, style_index: usize) -> Plane {
+fn plane_from_geometry(geom: &Geometry, layer_index: usize, style_index: usize) -> Plane {
     match geom.value {
-        Value::Polygon(v) => vec![plane_from_polygon(v, layer_index, style_index)],
-        Value::MultiPolygon(v) => Plane::from_iter(
+        Value::Polygon(ref v) => vec![plane_from_polygon(v, layer_index, style_index)],
+        Value::MultiPolygon(ref v) => Plane::from_iter(
             v.iter()
-                .map(|poly| plane_from_polygon(poly.to_vec(), layer_index, style_index)),
+                .map(|poly| plane_from_polygon(poly, layer_index, style_index)),
         ),
         _ => Vec::new(),
     }
 }
 
-pub fn plane_from_feature(f: Feature, layer_index: usize, style_index: usize) -> Plane {
+pub fn plane_from_feature(f: &Feature, layer_index: usize, style_index: usize) -> Plane {
     match f.geometry {
-        Some(geom) => plane_from_geometry(geom, layer_index, style_index),
+        Some(ref geom) => plane_from_geometry(geom, layer_index, style_index),
         None => Vec::new(),
     }
 }
