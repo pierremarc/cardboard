@@ -5,6 +5,7 @@ use std::slice::Iter;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
+use std::sync::{Arc, RwLock};
 
 struct Indexed<T: Copy>(usize, T);
 
@@ -78,12 +79,12 @@ pub enum Next<T> {
 
 pub struct Paro<'a, S: 'static + Copy + Send + Sync, T: 'static + Copy + Send> {
     source: Iter<'a, S>,
-    buffer: BinaryHeap<Indexed<T>>,
+    buffer: RwLock<Arc<BinaryHeap<Indexed<T>>>>,
     cms: Vec<Commander<S>>,
     send_result: Sender<Indexed<T>>,
     rec_result: Receiver<Indexed<T>>,
     head: usize,
-    tail: usize,
+    tail: RwLock<Arc<usize>>,
     sent: usize,
 }
 
@@ -93,20 +94,29 @@ impl<'a, S: 'static + Copy + Send + Sync, T: 'static + Copy + Send> Paro<'a, S, 
         Paro {
             source,
             cms: Vec::new(),
-            buffer: BinaryHeap::new(),
+            buffer: RwLock::new(Arc::new(BinaryHeap::new())),
             rec_result: rx_r,
             send_result: tx_r,
             head: ::std::usize::MAX,
-            tail: ::std::usize::MAX,
+            tail: RwLock::new(Arc::new(::std::usize::MAX)),
             sent: 0,
         }
     }
 
     pub fn start(&mut self) {
-        thread::spawn(|| {
-            for res in self.rec_result.recv() {
-                self.buffer.push(res);
-                self.tail -= 1;
+        let r = self.rec_result;
+        let mut b = self.buffer;
+        let mut t = self.tail;
+        thread::spawn(move || {
+            for res in r.recv() {
+                match b.write() {
+                    Ok(g)  =>{
+                        *g.
+                    },
+                    Err(_) => ()
+                }
+                // self.buffer.push(res);
+                // self.tail -= 1;
             }
         });
     }
