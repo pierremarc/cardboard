@@ -24,7 +24,6 @@ mod geom;
 mod handlers;
 mod lingua;
 mod operation;
-mod paro;
 mod style;
 mod surface_data;
 mod ui_cli;

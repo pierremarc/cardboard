@@ -75,6 +75,10 @@ impl UiSdl {
                     self.capture.save("capture.cardboard");
                     PostEventAction::Idle
                 }
+                Some(PreAction::PrintCam) => {
+                    println!("{}", camera);
+                    PostEventAction::Idle
+                }
                 None => self.update_cam(handle_key_event(keycode, keymod, &camera), timestamp),
             },
             sdl2::event::Event::MouseMotion {

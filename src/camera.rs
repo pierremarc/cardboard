@@ -1,6 +1,7 @@
 use geom::cross_norm;
 use lingua::Point;
 use nalgebra as na;
+use std::fmt;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Camera {
@@ -71,5 +72,15 @@ impl Camera {
         let m = axis.unwrap() * step;
         let tr = na::Translation3::from(m);
         tr.to_homogeneous()
+    }
+}
+
+impl fmt::Display for Camera {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "Camera {} {} {} {} {} {}",
+            self.eye.x, self.eye.y, self.eye.z, self.target.x, self.target.y, self.target.z,
+        )
     }
 }

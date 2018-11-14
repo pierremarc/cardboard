@@ -109,7 +109,7 @@ pub trait Drawable {
 
     fn draw<F>(&self, config: &DrawConfig, f: F)
     where
-        F: FnMut(&Operation);
+        F: FnMut(Operation);
 }
 
 impl<'a> Drawable for PlaneFlat<'a> {
@@ -158,11 +158,11 @@ impl<'a> Drawable for PlaneFlat<'a> {
 
     fn draw<F>(&self, config: &DrawConfig, f: F)
     where
-        F: FnMut(&Operation),
+        F: FnMut(Operation),
     {
-        let ops: OpList = config
+        config
             .indices
-            .par_iter()
+            .iter()
             .map(|index| {
                 draw_index(
                     index.to_owned(),
@@ -175,9 +175,8 @@ impl<'a> Drawable for PlaneFlat<'a> {
                     &config.tr,
                 )
             }).flatten()
-            .collect();
-
-        ops.iter().for_each(f);
+            .for_each(f);
+        // .for_each(|op_list| op_list.iter().for_each(f));
     }
 }
 

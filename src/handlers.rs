@@ -36,6 +36,7 @@ pub enum PreAction {
     Capture,
     Follow,
     Save,
+    PrintCam,
 }
 
 pub fn handle_key_event_pre(
@@ -47,6 +48,7 @@ pub fn handle_key_event_pre(
         sdl2::keyboard::Keycode::C => Some(PreAction::Capture),
         sdl2::keyboard::Keycode::S => Some(PreAction::Save),
         sdl2::keyboard::Keycode::F => Some(PreAction::Follow),
+        sdl2::keyboard::Keycode::P => Some(PreAction::PrintCam),
         _ => None,
     })
 }
