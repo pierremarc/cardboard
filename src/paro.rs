@@ -2,10 +2,11 @@ use std::cmp::{Ord, Ordering};
 use std::collections::BinaryHeap;
 use std::collections::VecDeque;
 use std::slice::Iter;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
-use std::sync::{Arc, RwLock};
 
 struct Indexed<T: Copy>(usize, T);
 
@@ -43,24 +44,30 @@ impl<T: Copy> Indexed<T> {
     }
 }
 
-struct Worker<I: Copy, O: Copy> {
+struct Worker<I: Copy, O: Copy, C: Copy> {
+    context: Arc<C>,
     command: Receiver<Indexed<I>>,
-    result: Sender<Indexed<O>>,
+    result_bucket: Arc<Mutex<ResultBucket<O>>>,
 }
 
-impl<I: Copy, O: Copy> Worker<I, O> {
+impl<I: Copy, O: Copy, C: Copy> Worker<I, O, C> {
     fn run<F>(&mut self, mut f: F)
     where
-        F: FnMut(I) -> O,
+        F: FnMut(C, I) -> O,
     {
+        let context = *self.context;
         for input in self.command.iter() {
             let i = input.index();
-            let r = f(input.get());
-            self.result.send(Indexed::new(i, r)).unwrap_or(())
+            let r = f(context, input.get());
+            match self.result_bucket.lock() {
+                Ok(mut bucket) => (*bucket).push(Indexed(i, r)),
+                Err(_) => (),
+            }
         }
     }
 }
 
+#[derive(Clone)]
 struct Commander<I: Copy>(Sender<Indexed<I>>);
 
 impl<I: Copy> Commander<I> {
@@ -77,104 +84,145 @@ pub enum Next<T> {
     Some(T),
 }
 
-pub struct Paro<'a, S: 'static + Copy + Send + Sync, T: 'static + Copy + Send> {
-    source: Iter<'a, S>,
-    buffer: RwLock<Arc<BinaryHeap<Indexed<T>>>>,
-    cms: Vec<Commander<S>>,
-    send_result: Sender<Indexed<T>>,
-    rec_result: Receiver<Indexed<T>>,
+struct ResultBucket<T>
+where
+    T: Copy,
+{
+    results: BinaryHeap<Indexed<T>>,
     head: usize,
-    tail: RwLock<Arc<usize>>,
-    sent: usize,
 }
 
-impl<'a, S: 'static + Copy + Send + Sync, T: 'static + Copy + Send> Paro<'a, S, T> {
-    pub fn new(source: Iter<'a, S>) -> Paro<S, T> {
-        let (tx_r, rx_r) = channel::<Indexed<T>>();
-        Paro {
-            source,
-            cms: Vec::new(),
-            buffer: RwLock::new(Arc::new(BinaryHeap::new())),
-            rec_result: rx_r,
-            send_result: tx_r,
+impl<T> ResultBucket<T>
+where
+    T: Copy,
+{
+    fn new() -> ResultBucket<T> {
+        ResultBucket {
+            results: BinaryHeap::new(),
             head: ::std::usize::MAX,
-            tail: RwLock::new(Arc::new(::std::usize::MAX)),
-            sent: 0,
         }
     }
 
-    pub fn start(&mut self) {
-        let r = self.rec_result;
-        let mut b = self.buffer;
-        let mut t = self.tail;
-        thread::spawn(move || {
-            for res in r.recv() {
-                match b.write() {
-                    Ok(g)  =>{
-                        *g.
-                    },
-                    Err(_) => ()
-                }
-                // self.buffer.push(res);
-                // self.tail -= 1;
-            }
-        });
+    fn push(&mut self, result: Indexed<T>) {
+        let i = result.index();
+        self.head = ::std::cmp::min(i, self.head);
+        self.results.push(result);
+    }
+
+    fn get_tail(&mut self, tail: usize) -> Option<T> {
+        let mut ready = false;
+        {
+            ready = self
+                .results
+                .peek_mut()
+                .map(|v| v.index() == tail)
+                .unwrap_or(false);
+        }
+
+        if ready {
+            self.results.pop().and_then(|v| Some(v.get()))
+        } else {
+            None
+        }
+    }
+}
+
+pub struct Paro<S, T, C>
+where
+    S: Copy + Send,
+    T: Copy + Send,
+    C: Copy + Send,
+{
+    source: Arc<Mutex<Vec<S>>>,
+    context: C,
+    cms: Arc<Mutex<Vec<Commander<S>>>>,
+    tail: usize,
+    head: Arc<AtomicUsize>,
+    sent: usize,
+    result_bucket: Arc<Mutex<ResultBucket<T>>>,
+}
+
+impl<S, T, C> Paro<S, T, C>
+where
+    S: Copy + Send + Sync + 'static,
+    T: Copy + Send + Sync + 'static,
+    C: Copy + Send + Sync + 'static,
+{
+    pub fn new(source: Arc<Mutex<Vec<S>>>, context: C) -> Paro<S, T, C> {
+        Paro {
+            source: source.clone(),
+            context: context,
+            cms: Arc::new(Mutex::new(Vec::new())),
+            tail: ::std::usize::MAX,
+            head: Arc::new(AtomicUsize::new(::std::usize::MAX)),
+            sent: 0,
+            result_bucket: Arc::new(Mutex::new(ResultBucket::new())),
+        }
     }
 
     pub fn add_worker<F>(&mut self, f: F)
     where
-        F: FnMut(S) -> T + Send + 'static,
+        F: FnMut(C, S) -> T + Send + 'static,
     {
-        let (tx_c, rx_c) = channel::<Indexed<S>>();
-
+        let (tx, rx) = channel();
         let mut w = Worker {
-            command: rx_c,
-            result: self.send_result.clone(),
+            context: Arc::new(self.context),
+            command: rx,
+            result_bucket: self.result_bucket.clone(),
         };
 
-        self.cms.push(Commander(tx_c));
+        let mut locked_commands = self.cms.lock().unwrap();
+        locked_commands.push(Commander(tx));
 
         thread::spawn(move || w.run(f));
-        self.buffer.reserve(1);
     }
 
     fn prefetch(&mut self) {
-        let len = self.cms.len();
-        for i in 0..len {
-            let args = self.source.next();
-            let com = &self.cms[i];
-            match args {
-                Some(a) => {
-                    self.head -= 1;
-                    com.send(self.head, *a);
+        let mut locked_commands = self.cms.lock().unwrap();
+        let commands: Vec<Commander<S>> = locked_commands.iter().map(|c| c.clone()).collect();
+        let source = self.source.clone();
+        let head = self.head.clone();
+        let h = thread::spawn(move || {
+            let mut ci = 0;
+            let len = commands.len();
+            let locked_source = source.lock().unwrap();
+            for (i, args) in locked_source.iter().enumerate() {
+                if ci == len {
+                    ci = 0;
                 }
-                None => (),
-            };
+                let com = &commands[ci];
+                com.send(::std::usize::MAX - i, *args);
+                head.fetch_sub(1, AtomicOrdering::SeqCst);
+            }
+        });
+    }
+
+    fn pri_next(&self) -> Result<Option<T>, usize> {
+        let mut bucket = self.result_bucket.lock().unwrap();
+        match bucket.get_tail(self.tail) {
+            None => {
+                let head = self.head.load(AtomicOrdering::Relaxed);
+                if self.tail == head {
+                    Ok(None)
+                } else {
+                    Err(self.tail - head)
+                }
+            }
+            Some(v) => Ok(Some(v)),
         }
     }
 
-    pub fn next(&mut self) -> Next<T> {
-        // let mut ready = false;
-        {
-            match self.buffer.peek() {
-                Some(val) => {
-                    if val.index() != self.tail {
-                        return Next::Unordered;
-                    }
+    pub fn next(&mut self) -> Option<T> {
+        loop {
+            match self.pri_next() {
+                Ok(v) => {
+                    self.tail -= 1;
+                    return v;
                 }
-                None => {
-                    if self.head == self.tail {
-                        return Next::End;
-                    } else {
-                        return Next::NotReady;
-                    }
+                Err(u) => {
+                    thread::sleep(::std::time::Duration::from_millis(u as u64));
                 }
             }
-        }
-
-        match self.buffer.pop() {
-            Some(val) => Next::Some(val.get()),
-            None => Next::Error,
         }
     }
 }

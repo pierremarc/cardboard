@@ -1,13 +1,16 @@
 use camera::Camera;
 use geom::transform2d;
 use lingua::PlaneFlat;
+use lingua::PlaneT;
 use lingua::Point;
 use nalgebra as na;
 use nalgebra::distance_squared;
 use operation::{OpList, Operation};
 use ordered_float::OrderedFloat;
+use paro;
 use rayon::prelude::*;
 use std::cmp;
+use std::sync::{Arc, Mutex, RwLock};
 use time::PreciseTime;
 
 struct Dist(OrderedFloat<f64>, usize);
@@ -94,6 +97,50 @@ fn draw_index(
     ops
 }
 
+#[derive(Clone, Copy)]
+pub struct Config {
+    view: na::Matrix4<f64>,
+    view_projection: na::Matrix4<f64>,
+    corrective: na::Matrix3<f64>,
+    clip_z: f64,
+    scale: f64,
+    tr: na::Matrix3<f64>,
+}
+
+pub fn draw_plane(config: Config, plane: PlaneT) -> Vec<Operation> {
+    let mut ops: Vec<Operation> = Vec::new();
+    let mut started = false;
+    let als = plane
+        .points
+        .iter()
+        .map(|pt| config.view_projection.transform_point(pt));
+    let is_in_front = plane
+        .points
+        .iter()
+        .any(|p| config.view.transform_point(p).z < 0.0);
+
+    if is_in_front {
+        ops.push(Operation::Begin);
+        als.for_each(|aligned_point3d| {
+            let translated = transform2d(
+                &aligned_point3d,
+                &config.corrective,
+                config.scale,
+                &config.tr,
+            );
+            if started {
+                ops.push(Operation::Line(translated.to_owned()));
+            } else {
+                started = true;
+                ops.push(Operation::Move(translated.to_owned()));
+            }
+        });
+        ops.push(Operation::Close);
+        ops.push(Operation::Paint(plane.layer_index, plane.style_index));
+    };
+    ops
+}
+
 pub struct DrawConfig {
     indices: Vec<usize>,
     view: na::Matrix4<f64>,
@@ -156,10 +203,47 @@ impl<'a> Drawable for PlaneFlat<'a> {
         indices
     }
 
+    // fn draw<F>(&self, config: &DrawConfig, f: F)
+    // where
+    //     F: FnMut(&Operation),
+    // {
+    //     let ops: OpList = config
+    //         .indices
+    //         .par_iter()
+    //         .map(|index| {
+    //             draw_index(
+    //                 index.to_owned(),
+    //                 self,
+    //                 &config.view,
+    //                 &config.view_projection,
+    //                 &config.corrective,
+    //                 config.clip_z,
+    //                 config.scale,
+    //                 &config.tr,
+    //             )
+    //         }).flatten()
+    //         .collect();
+
+    //     ops.iter().for_each(f);
+    // }
+
     fn draw<F>(&self, config: &DrawConfig, f: F)
     where
         F: FnMut(&Operation),
     {
+        let c = Config {
+            view: config.view,
+            view_projection: config.view_projection,
+            corrective: config.corrective,
+            clip_z: config.clip_z,
+            scale: config.scale,
+            tr: config.tr,
+        };
+
+        let planes: Vec<&PlaneT> = config.indices.iter().map(|i| self[i.to_owned()]).collect();
+
+        let p = paro::Paro::new(Arc::new(Mutex::new(planes)), c);
+
         let ops: OpList = config
             .indices
             .par_iter()
